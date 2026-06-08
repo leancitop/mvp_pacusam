@@ -1,0 +1,35 @@
+# Datos / artefactos (no versionar imágenes médicas ni datasets)
+data/
+*.dcm
+*.nii
+*.nii.gz
+models/
+*.ckpt
+*.pt
+*.pth
+*.h5
+
+# Entornos / dependencias
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+node_modules/
+dist/
+build/
+
+# Config local / secretos
+.env
+.env.local
+*.local
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
