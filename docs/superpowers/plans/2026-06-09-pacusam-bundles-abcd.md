@@ -384,3 +384,47 @@ def test_log_y_listado_de_actividad():
 - Las teclas del visor (Bundle C) NO deben colisionar con A/C/R del curado.
 - Schema: columnas nuevas con `DEFAULT`; es MVP, sin migraciones (re-seed). Mantener `seed.py` determinista.
 - Autorización: rutas project-scoped via `_owned_project`; rutas admin via `require_admin`.
+
+---
+
+## 🔍 Decisiones del eng-review (LEY — override de los cuerpos de tarea)
+
+Resultado del review autónomo (3 lentes + síntesis). Veredicto: **APROBADO PARA EJECUTAR con ediciones obligatorias.** Estas decisiones mandan sobre los cuerpos de tarea de arriba. Baseline verificado: 174 tests.
+
+### Orden de ejecución POR CAPA (no bundle-por-bundle, para tocar cada archivo caliente una vez)
+- **FASE 1 — Backend puro (cero templates), TDD + `pytest -q` GLOBAL al cierre de cada tarea:**
+  1. **D1 roles** en auth.py [P0].
+  2. **A1 sampling strategy** en queue_next (y queue_list solo para el test, ver P2-strategy).
+  3. **A2 f1/auc por ciclo** [record_cycle keyword-only].
+  4. **A3 threshold_status** [COALESCE].
+  5. **B1 conflicts/confusion_matrix/quality_metrics** [caso-vacío neutro].
+  6. **B2 ab_summary/dataset_health** [caso-vacío + umbral relativo 100/n].
+  7. **C2-backend bulk_validate + gallery service** [best-effort + contrato IDOR].
+  8. **D2 log_activity/list_activity** [servicio].
+- **FASE 2 — Una sola pasada de contexto en api.py:** analytics_page recibe conflicts/confusion/quality/ab/health; `_render_next_card` recibe `threshold` + `active_strategy`; `/queue` acepta `strategy`; `POST /bulk-validate` con filtro IDOR; `_log()` best-effort en validate/reject/unreject; `require_admin` + `GET /admin` read-only.
+- **FASE 3 — Templates, UNA edición por archivo caliente, corriendo `test_wow_ui.py` tras cada uno:** (a) image_card.html (viewer OHIF hotkeys SCOPED `=`/`-`/`0`/`i`, contador de umbral, botón "aprobar pendientes >90%", entropy copy honesto); (b) analytics.html (matriz, conflictos, A/B, salud, precision/recall, sparkline F1 — A4+B3 juntos); (c) curate.html (selector de estrategia); (d) base.html (nav admin gateado + `viewer()` global) + admin.html read-only.
+- **FASE 4 — Cierre (Task Z):** `rm -f pacusam.db*`, uvicorn e2e, README.
+- **DIFERIDO (si sobra tiempo, NO en este branch):** gallery.html + grid + búsqueda C3; `POST /admin/users/{id}/role` (cambio de rol en vivo); sliders Window/Level del viewer.
+
+### Bloqueantes (P0/P1)
+- **[P0] Wiring de `role` (D1):** tocar 4 puntos en auth.py — `create_user(conn,email,password,role='curador')` (INSERT incluye role + SELECT incluye role), `authenticate` SELECT +role, `get_user` SELECT +role, `_user_dict` agrega `'role': row['role']`. NO re-exponer password_hash. Test: `get_user(...)['role']` y `authenticate(...)['role']`. Correr test_auth.py tras D1.
+- **[P1] Analytics con 0 validadas:** `confusion_matrix` → matriz de ceros NxN; `quality_metrics` → accuracy 0.0, per_class 0.0; `dataset_health` → status neutro 'sin datos', `minority=None`; `ab_summary` → neutro. NUNCA excepción. Templates renderizan el branch vacío. Test: GET /analytics de proyecto con 0 validadas → 200 (cubre test_api_cycles existente).
+- **[P1] IDOR en bulk:** `POST /bulk-validate` filtra los ids al proyecto (`SELECT id FROM images WHERE project_id=? AND id IN(...)`) ANTES de validar; solo los propios pasan a `bulk_validate`. Test cross-user.
+- **[P1] Hotkeys del visor (C1):** set FIJO `=`/`-`/`0`/`i`, montaje `@keydown` SCOPED al contenedor (NO `.window`), prohibido a/c/r/Escape. Test de regresión: image_card.html sigue con `@keydown.window.a/.c/.r`.
+- **[P1] record_cycle keyword-only:** `record_cycle(...,f1=None,auc=None)` al final; simulate_retrain pasa f1/auc por keyword solo en path 'ok'. NO tocar improvement_pct/avg_conf. Regresión: llamada posicional sin f1/auc sigue funcionando.
+- **[P1] seed f1/auc:** actualizar las 2 llamadas record_cycle de seed.py con f1/auc keyword crecientes (0.86/0.88 y 0.90/0.92); el sparkline usa `f1|default(0)`.
+
+### Ajustes (P2/P3)
+- **[P2] Cortar gallery:** mantener backend `bulk_validate` + `gallery` (con tests, IDOR, best-effort) pero reemplazar la pantalla gallery por UN botón en curate.html: "Aprobar pendientes con confianza >90%" → POST /bulk-validate (el server arma la lista de ids propios con confidence>=0.9). gallery.html + búsqueda C3 → Diferido.
+- **[P2] bulk best-effort:** try/except DomainError por id, contar solo éxitos, no abortar el lote. Test con una imagen sin suggested_label mezclada.
+- **[P2] strategy solo en queue_next:** el filmstrip (queue_list) SIEMPRE usa uncertainty (no recibe strategy, preserva test_services/test_api_filter). El selector re-dispara GET /queue?strategy=; no se propaga a validate/reject (auto-avance vuelve a uncertainty, aceptable MVP).
+- **[P2] test random:** reescribir para probar orden completo vía `queue_list(strategy='random',seed=42)` == sí mismo, y != sequential. (Implica implementar random también en queue_list, pero su DEFAULT sigue siendo uncertainty.)
+- **[P2] random stdlib:** borrar la nota falsa de "random prohibido/hashlib.md5". Usar `random.Random(seed).shuffle`; si seed None → seed=0 o id ASC.
+- **[P2] threshold COALESCE:** `threshold_status` usa `COALESCE(retrain_threshold,10)`. Test sobre proyecto de create_project (sin pasar threshold) → 10.
+- **[P2] confusion/quality label fuera de set:** guarda `if lbl in labels` antes de indexar. Test con label fuera del set → se ignora, sin excepción.
+- **[P2] log best-effort:** helper `_log()` en api.py con try/except que NUNCA propaga, llamado solo tras `_guard` ok, en validate/reject/unreject (create_project/retrain opcionales). Correr test_curate_api/test_api_projects tras D2.
+- **[P3] em-dash:** solo `-` y `:`, acentos correctos, nunca `—`. Rangos como "50-80%" con guion normal. **Correr test_wow_ui.py tras CADA tarea de UI.**
+- **[P3] entropy copy honesto:** "Incertidumbre (proxy 1 - confianza)", quitar "Monte Carlo Dropout". Opcional: entropía binaria real `H=-p*log2(p)-(1-p)*log2(1-p)`.
+- **[P3] dataset_health umbral relativo:** ideal=100/n; verde si min_pct>=(100/n)*0.8, amarillo si >=*0.5, rojo si menos. Sin 33% fijo (rompería multiclase balanceada).
+- **[P3] admin read-only:** D3 = gating + vista admin read-only (usuarios+role+log filtrable). Quitar el POST de cambio de rol del camino principal (→ Diferido). Contrato: no-auth→303 /login, curador→403, admin→200.
+- **[P3] db reset:** Task Z borra `pacusam.db*` antes de uvicorn; documentar en README.
