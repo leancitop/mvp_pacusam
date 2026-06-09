@@ -14,7 +14,7 @@
      x-data="{ rejecting: false, correcting: false }"
      x-init="$nextTick(() => window.lucide && window.lucide.createIcons())"
      @keydown.window.a.prevent="if (!rejecting) $refs.confirmBtn && $refs.confirmBtn.click()"
-     @keydown.window.c.prevent="if (!rejecting) { {% if other_labels | length > 1 %}correcting = !correcting{% else %}$refs.correctBtn && $refs.correctBtn.click(){% endif %} }"
+     @keydown.window.c.prevent="if (!rejecting) correcting = !correcting"
      @keydown.window.r.prevent="rejecting = true; correcting = false"
      @keydown.window.escape="rejecting = false; correcting = false">
 
@@ -67,37 +67,31 @@
         </button>
 
         <div class="grid grid-cols-2 gap-2">
-          {% if other_labels | length == 1 %}
-          <button x-ref="correctBtn"
-                  hx-post="/images/{{ image.id }}/validate"
-                  hx-vals='{"label": "{{ other_labels[0] }}"}'
-                  hx-target="#image-card" hx-swap="outerHTML"
-                  class="inline-flex items-center justify-center gap-1.5 px-3 py-2.5 text-sm font-medium rounded-md bg-accent-tint text-accent hover:bg-accent hover:text-white transition-colors duration-150">
-            <i data-lucide="pencil" class="h-4 w-4"></i> Corregir <kbd class="font-mono text-[10px] opacity-80">C</kbd>
-          </button>
-          {% else %}
           <button x-ref="correctBtn" type="button" @click="correcting = !correcting"
-                  class="inline-flex items-center justify-center gap-1.5 px-3 py-2.5 text-sm font-medium rounded-md bg-accent-tint text-accent hover:bg-accent hover:text-white transition-colors duration-150">
+                  :class="correcting ? 'bg-accent text-white' : 'bg-accent-tint text-accent'"
+                  class="inline-flex items-center justify-center gap-1.5 px-3 py-2.5 text-sm font-medium rounded-md hover:bg-accent hover:text-white transition-colors duration-150">
             <i data-lucide="pencil" class="h-4 w-4"></i> Corregir <kbd class="font-mono text-[10px] opacity-80">C</kbd>
           </button>
-          {% endif %}
           <button @click="rejecting = true; correcting = false"
                   class="inline-flex items-center justify-center gap-1.5 px-3 py-2.5 text-sm font-medium rounded-md bg-rejected-tint text-rejected hover:bg-rejected hover:text-white transition-colors duration-150">
             <i data-lucide="x" class="h-4 w-4"></i> Rechazar <kbd class="font-mono text-[10px] opacity-80">R</kbd>
           </button>
         </div>
 
-        {% if other_labels | length > 1 %}
-        {# Multiclase: lista inline de etiquetas (D24) #}
-        <div x-show="correcting" x-cloak class="flex flex-wrap gap-1.5 pt-1">
-          {% for label in other_labels %}
-          <button hx-post="/images/{{ image.id }}/validate"
-                  hx-vals='{"label": "{{ label }}"}'
-                  hx-target="#image-card" hx-swap="outerHTML"
-                  class="px-2.5 py-1.5 text-xs font-medium rounded-md border border-border text-ink hover:bg-accent hover:text-white hover:border-accent transition-colors duration-150">{{ label }}</button>
-          {% endfor %}
+        {# Corrector: tocar C (o el boton) despliega las otras etiquetas.
+           Binario = 1 chip, multiclase = N. Consistente, con animacion de apertura. #}
+        <div x-show="correcting" x-cloak x-transition.origin.top
+             class="rounded-md border border-border bg-surface2 p-2 mt-0.5">
+          <p class="text-xs text-muted mb-1.5">Elegí la etiqueta correcta:</p>
+          <div class="flex flex-wrap gap-1.5">
+            {% for label in other_labels %}
+            <button hx-post="/images/{{ image.id }}/validate"
+                    hx-vals='{"label": "{{ label }}"}'
+                    hx-target="#image-card" hx-swap="outerHTML"
+                    class="px-2.5 py-1.5 text-xs font-medium rounded-md border border-border bg-surface text-ink hover:bg-accent hover:text-white hover:border-accent transition-colors duration-150">{{ label }}</button>
+            {% endfor %}
+          </div>
         </div>
-        {% endif %}
       </div>
 
       {# Panel de motivo de rechazo #}
