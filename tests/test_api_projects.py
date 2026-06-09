@@ -39,7 +39,7 @@ def test_empty_state_sin_proyectos(client):
     )
     home = client.get("/", follow_redirects=False)
     assert home.status_code == 200
-    assert "Todavia no tenes proyectos" in home.text
+    assert "Todavía no tenés proyectos" in home.text
 
 
 def test_crear_proyecto_redirige_a_detalle_y_aparece(demo_login):

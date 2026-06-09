@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% from "partials/ui.html" import progress_bar %}
-{% block title %}Analitica · {{ project.name }}{% endblock %}
+{% block title %}Analítica · {{ project.name }}{% endblock %}
 {% block content %}
 <header class="border-b border-border bg-surface">
   <div class="mx-auto max-w-5xl px-6 py-3 flex items-center justify-between">
@@ -22,7 +22,7 @@
         <span class="text-faint">/</span>
         <a href="/projects/{{ project.id }}" class="hover:text-ink transition-colors">{{ project.name }}</a>
       </nav>
-      <h1 class="font-display text-2xl font-semibold text-ink">Analitica</h1>
+      <h1 class="font-display text-2xl font-semibold text-ink">Analítica</h1>
     </div>
     <div class="flex items-center gap-2 shrink-0">
       <a href="/projects/{{ project.id }}/curate"
@@ -52,7 +52,7 @@
       <p class="mt-1 text-xs text-faint">{{ progress.validated }} validadas · {{ progress.rejected }} rechazadas · {{ progress.pending }} pendientes.</p>
     </div>
     <div class="rounded-lg border border-border bg-surface p-5">
-      <p class="text-sm text-muted">Total de imagenes</p>
+      <p class="text-sm text-muted">Total de imágenes</p>
       <p class="mt-1 font-mono text-3xl text-ink"><span x-data="countUp({{ progress.total }}, 0)" x-text="display">{{ progress.total }}</span></p>
       <p class="mt-1 text-xs text-faint">en el dataset del proyecto.</p>
     </div>
@@ -63,15 +63,15 @@
       <p class="mt-1 text-xs text-muted">Curaste {{ time_saved.decided }} en ~{{ (time_saved.al_seconds / 60) | round(1) }} min. Ahorraste ~{{ time_saved.saved_pct }}% de tiempo vs etiquetar a mano.</p>
       {% else %}
       <p class="mt-1 font-mono text-3xl text-approved">~0 min</p>
-      <p class="mt-1 text-xs text-muted">Empeza a curar para medir el ahorro.</p>
+      <p class="mt-1 text-xs text-muted">Empezá a curar para medir el ahorro.</p>
       {% endif %}
     </div>
   </section>
 
-  {# Distribucion de clases con barras. #}
+  {# Distribución de clases con barras. #}
   <section class="mt-8 rounded-lg border border-border bg-surface p-6">
-    <h2 class="font-display text-xl text-ink">Distribucion de clases</h2>
-    <p class="mb-4 text-sm text-muted">Etiquetas finales sobre imagenes validadas.</p>
+    <h2 class="font-display text-xl text-ink">Distribución de clases</h2>
+    <p class="mb-4 text-sm text-muted">Etiquetas finales sobre imágenes validadas.</p>
     {% if distribution %}
       <div class="space-y-3">
         {% for d in distribution %}
@@ -89,7 +89,7 @@
       </div>
     {% else %}
       <p class="rounded-md bg-surface2 px-4 py-6 text-center text-sm text-faint">
-        Todavia no hay imagenes validadas. Empeza a curar para ver la distribucion.
+        Todavía no hay imágenes validadas. Empezá a curar para ver la distribucion.
       </p>
     {% endif %}
   </section>
@@ -108,7 +108,7 @@
           <div class="rounded-lg border border-border bg-surface2/60 p-4">
             <div class="flex flex-wrap items-baseline justify-between gap-2">
               <p class="text-sm font-medium text-ink">Ciclo #{{ loop.index }}</p>
-              <p class="text-xs text-faint">{{ c.images_used }} imagenes usadas</p>
+              <p class="text-xs text-faint">{{ c.images_used }} imágenes usadas</p>
             </div>
             <div class="mt-3 flex items-center gap-3">
               <span class="font-mono text-xs text-muted tabular-nums shrink-0">{{ (c.avg_conf_before * 100) | round(1) }}%</span>
@@ -131,7 +131,7 @@
       </ol>
     {% else %}
       <p class="rounded-md bg-surface2 px-4 py-6 text-center text-sm text-faint">
-        Todavia no hay ciclos. Simula un reentrenamiento para empezar el historial.
+        Todavía no hay ciclos. Simula un reentrenamiento para empezar el historial.
       </p>
     {% endif %}
   </section>
@@ -141,7 +141,7 @@
     <h2 class="font-display text-xl text-ink">Resumen</h2>
     <p class="mt-2 text-sm leading-relaxed text-muted">
       Se validaron <strong class="text-ink">{{ progress.validated }}</strong> de
-      <strong class="text-ink">{{ progress.total }}</strong> imagenes
+      <strong class="text-ink">{{ progress.total }}</strong> imágenes
       ({{ progress.percent }}% del dataset). El modelo acerto la sugerencia en el
       <strong class="text-ink">{{ (concordance.rate * 100) | round(1) }}%</strong>
       de los casos validados, lo que indica
