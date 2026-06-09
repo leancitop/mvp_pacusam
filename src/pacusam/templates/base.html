@@ -57,6 +57,65 @@
   <script defer src="/static/vendor/alpine.min.js"></script>
   {# Iconos Lucide 0.469.0 (UMD), pineado y servido local. #}
   <script defer src="/static/vendor/lucide.min.js"></script>
+  {# canvas-confetti 1.9.3, pineado y servido local. Micro-celebracion (wow). #}
+  <script defer src="/static/vendor/confetti.min.js"></script>
+
+  <style>
+    /* Auto-avance del card: fade + leve slide al hacer swap (htmx outerHTML).
+       Suave, no brusco. Las fases htmx-swapping/htmx-settling las setea HTMX
+       sobre el elemento que se reemplaza. */
+    #image-card {
+      transition: opacity 140ms ease, transform 140ms ease;
+    }
+    #image-card.htmx-swapping {
+      opacity: 0;
+      transform: translateY(8px);
+    }
+    #image-card.htmx-settling {
+      opacity: 0;
+      transform: translateY(-6px);
+    }
+
+    /* Spinner de carga (reusa el token de color del acento). */
+    .pacusam-spinner {
+      width: 1.25rem;
+      height: 1.25rem;
+      border: 2px solid #E7E4DE;       /* border token */
+      border-top-color: #2563EB;        /* accent token */
+      border-radius: 9999px;
+      animation: pacusam-spin 720ms linear infinite;
+    }
+    @keyframes pacusam-spin { to { transform: rotate(360deg); } }
+
+    /* Pop suave de la tarjeta de celebracion "Dataset curado". */
+    .pacusam-pop {
+      animation: pacusam-pop 320ms cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    @keyframes pacusam-pop {
+      from { opacity: 0; transform: scale(0.94); }
+      to   { opacity: 1; transform: scale(1); }
+    }
+
+    /* Slide-in suave de los toasts. */
+    #toast-host > div {
+      animation: pacusam-toast-in 220ms cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    @keyframes pacusam-toast-in {
+      from { opacity: 0; transform: translateX(16px); }
+      to   { opacity: 1; transform: translateX(0); }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      #image-card, #image-card.htmx-swapping, #image-card.htmx-settling {
+        transition: none;
+        opacity: 1;
+        transform: none;
+      }
+      .pacusam-spinner { animation: none; }
+      #toast-host > div { animation: none; }
+      .pacusam-pop { animation: none; }
+    }
+  </style>
 
   {% block head_extra %}{% endblock %}
 </head>
@@ -132,6 +191,64 @@
       }
       window.addEventListener('DOMContentLoaded', renderIcons);
       document.body.addEventListener('htmx:afterSwap', renderIcons);
+    })();
+  </script>
+
+  {# Animaciones wow: helper Alpine de count-up + disparo de confetti en la
+     micro-celebracion de "Dataset curado". Respetan prefers-reduced-motion. #}
+  <script>
+    (function () {
+      var reduce = window.matchMedia &&
+        window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+      // Helper Alpine: anima un numero de 0 al valor objetivo (~600ms).
+      // Uso: <span x-data="countUp(73.4, 1)" x-text="display"></span>
+      window.countUp = function (target, decimals) {
+        decimals = decimals || 0;
+        return {
+          display: reduce ? Number(target).toFixed(decimals) : (0).toFixed(decimals),
+          init: function () {
+            if (reduce) return;
+            var self = this;
+            var start = null;
+            var dur = 600;
+            function step(ts) {
+              if (start === null) start = ts;
+              var t = Math.min((ts - start) / dur, 1);
+              // ease-out cubic
+              var eased = 1 - Math.pow(1 - t, 3);
+              self.display = (target * eased).toFixed(decimals);
+              if (t < 1) requestAnimationFrame(step);
+              else self.display = Number(target).toFixed(decimals);
+            }
+            requestAnimationFrame(step);
+          },
+        };
+      };
+
+      // Confetti sutil cuando aparece la micro-celebracion (else branch del card).
+      function celebrate(scope) {
+        if (reduce || typeof window.confetti !== 'function') return;
+        var root = scope || document;
+        if (!root.querySelector || !root.querySelector('.pacusam-celebrate')) return;
+        window.confetti({
+          particleCount: 70,
+          spread: 64,
+          startVelocity: 32,
+          gravity: 0.9,
+          scalar: 0.85,
+          origin: { y: 0.7 },
+          colors: ['#2563EB', '#16A34A', '#D97706'],
+        });
+      }
+      // Tras cada swap de HTMX, si el contenido nuevo trae la celebracion, dispara.
+      document.body.addEventListener('htmx:afterSwap', function (evt) {
+        celebrate(evt.detail && evt.detail.target ? evt.detail.target : document);
+        // El filmstrip OOB tambien puede reemplazar el card; revisar todo el doc.
+        celebrate(document);
+      });
+      // Por si la pagina carga ya en estado de cola vacia.
+      window.addEventListener('DOMContentLoaded', function () { celebrate(document); });
     })();
   </script>
 

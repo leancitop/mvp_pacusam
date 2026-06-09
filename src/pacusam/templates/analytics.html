@@ -43,23 +43,23 @@
   <section class="mt-6 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
     <div class="rounded-lg border border-border bg-surface p-5">
       <p class="text-sm text-muted">Concordancia con el modelo</p>
-      <p class="mt-1 font-mono text-3xl text-ink">{{ (concordance.rate * 100) | round(1) }}%</p>
+      <p class="mt-1 font-mono text-3xl text-ink"><span x-data="countUp({{ (concordance.rate * 100) | round(1) }}, 1)" x-text="display">{{ (concordance.rate * 100) | round(1) }}</span>%</p>
       <p class="mt-1 text-xs text-faint">{{ concordance.agreed }} de {{ concordance.total_validated }} validadas coinciden con la sugerencia.</p>
     </div>
     <div class="rounded-lg border border-border bg-surface p-5">
       <p class="text-sm text-muted">Progreso de curado</p>
-      <p class="mt-1 font-mono text-3xl text-ink">{{ progress.percent }}%</p>
+      <p class="mt-1 font-mono text-3xl text-ink"><span x-data="countUp({{ progress.percent }}, 1)" x-text="display">{{ progress.percent }}</span>%</p>
       <p class="mt-1 text-xs text-faint">{{ progress.validated }} validadas · {{ progress.rejected }} rechazadas · {{ progress.pending }} pendientes.</p>
     </div>
     <div class="rounded-lg border border-border bg-surface p-5">
       <p class="text-sm text-muted">Total de imagenes</p>
-      <p class="mt-1 font-mono text-3xl text-ink">{{ progress.total }}</p>
+      <p class="mt-1 font-mono text-3xl text-ink"><span x-data="countUp({{ progress.total }}, 0)" x-text="display">{{ progress.total }}</span></p>
       <p class="mt-1 text-xs text-faint">en el dataset del proyecto.</p>
     </div>
     <div class="rounded-lg border border-approved/30 bg-approved-tint p-5">
       <p class="text-sm text-approved">Tiempo ahorrado</p>
       {% if time_saved.decided > 0 %}
-      <p class="mt-1 font-mono text-3xl text-approved">~{{ time_saved.saved_minutes }} min</p>
+      <p class="mt-1 font-mono text-3xl text-approved">~<span x-data="countUp({{ time_saved.saved_minutes }}, 0)" x-text="display">{{ time_saved.saved_minutes }}</span> min</p>
       <p class="mt-1 text-xs text-muted">Curaste {{ time_saved.decided }} en ~{{ (time_saved.al_seconds / 60) | round(1) }} min. Ahorraste ~{{ time_saved.saved_pct }}% de tiempo vs etiquetar a mano.</p>
       {% else %}
       <p class="mt-1 font-mono text-3xl text-approved">~0 min</p>
@@ -99,30 +99,36 @@
     <h2 class="font-display text-xl text-ink">Ciclos de aprendizaje activo</h2>
     <p class="mb-4 text-sm text-muted">Cada reentrenamiento simulado acerca la confianza del modelo sobre las pendientes.</p>
     {% if cycles %}
-      <div class="overflow-x-auto">
-        <table class="w-full text-sm">
-          <thead>
-            <tr class="text-left text-xs uppercase tracking-wide text-faint border-b border-border">
-              <th class="py-2 pr-4 font-medium">Ciclo</th>
-              <th class="py-2 pr-4 font-medium">Imagenes</th>
-              <th class="py-2 pr-4 font-medium">Confianza antes</th>
-              <th class="py-2 pr-4 font-medium">Confianza despues</th>
-              <th class="py-2 pr-4 font-medium">Mejora</th>
-            </tr>
-          </thead>
-          <tbody>
-            {% for c in cycles %}
-            <tr class="border-b border-border/60 last:border-0">
-              <td class="py-2 pr-4 font-mono text-muted">#{{ loop.index }}</td>
-              <td class="py-2 pr-4 font-mono text-ink">{{ c.images_used }}</td>
-              <td class="py-2 pr-4 font-mono text-muted">{{ (c.avg_conf_before * 100) | round(1) }}%</td>
-              <td class="py-2 pr-4 font-mono text-ink">{{ (c.avg_conf_after * 100) | round(1) }}%</td>
-              <td class="py-2 pr-4 font-mono text-approved">+{{ c.improvement_pct }}%</td>
-            </tr>
-            {% endfor %}
-          </tbody>
-        </table>
-      </div>
+      {# Timeline: cada ciclo muestra la confianza subiendo (antes -> despues). El
+         marcador a la izquierda y la linea vertical dan sensacion de progresion. #}
+      <ol class="relative border-l border-border pl-6 space-y-5">
+        {% for c in cycles %}
+        <li class="relative">
+          <span class="absolute -left-[1.65rem] top-1 grid h-5 w-5 place-items-center rounded-full bg-accent text-[10px] font-mono font-semibold text-white">{{ loop.index }}</span>
+          <div class="rounded-lg border border-border bg-surface2/60 p-4">
+            <div class="flex flex-wrap items-baseline justify-between gap-2">
+              <p class="text-sm font-medium text-ink">Ciclo #{{ loop.index }}</p>
+              <p class="text-xs text-faint">{{ c.images_used }} imagenes usadas</p>
+            </div>
+            <div class="mt-3 flex items-center gap-3">
+              <span class="font-mono text-xs text-muted tabular-nums shrink-0">{{ (c.avg_conf_before * 100) | round(1) }}%</span>
+              <div class="relative h-2 flex-1 overflow-hidden rounded-full bg-surface2">
+                {# Barra base: confianza previa (apagada). #}
+                <div class="absolute inset-y-0 left-0 rounded-full bg-border"
+                     style="width: {{ (c.avg_conf_before * 100) | round(1) }}%"></div>
+                {# Barra de avance: confianza posterior (acento, sube por encima). #}
+                <div class="absolute inset-y-0 left-0 rounded-full bg-accent transition-[width] duration-500 ease-out"
+                     style="width: {{ (c.avg_conf_after * 100) | round(1) }}%"></div>
+              </div>
+              <span class="font-mono text-xs font-semibold text-ink tabular-nums shrink-0">{{ (c.avg_conf_after * 100) | round(1) }}%</span>
+              <span class="inline-flex items-center gap-0.5 rounded-full bg-approved-tint px-2 py-0.5 text-xs font-mono font-semibold text-approved shrink-0">
+                <i data-lucide="arrow-up-right" class="h-3 w-3"></i>{{ c.improvement_pct }}%
+              </span>
+            </div>
+          </div>
+        </li>
+        {% endfor %}
+      </ol>
     {% else %}
       <p class="rounded-md bg-surface2 px-4 py-6 text-center text-sm text-faint">
         Todavia no hay ciclos. Simula un reentrenamiento para empezar el historial.

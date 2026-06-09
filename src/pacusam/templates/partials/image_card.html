@@ -137,9 +137,10 @@
   {% include "partials/filmstrip.html" %}
 </div>
 {% else %}
-{# D14: micro-celebracion al terminar la cola. SIN data-image-id (lo testea D14). #}
-<div id="image-card" class="flex-1 min-h-0 w-full flex items-center justify-center p-8">
-  <div class="bg-approved-tint border border-approved/30 rounded-lg p-10 text-center max-w-md">
+{# D14: micro-celebracion al terminar la cola. SIN data-image-id (lo testea D14).
+   pacusam-celebrate: hook que dispara confetti al aparecer (script en base.html). #}
+<div id="image-card" class="pacusam-celebrate flex-1 min-h-0 w-full flex items-center justify-center p-8">
+  <div class="pacusam-pop bg-approved-tint border border-approved/30 rounded-lg p-10 text-center max-w-md">
     <i data-lucide="party-popper" class="mx-auto h-10 w-10 text-approved"></i>
     <p class="mt-3 font-display text-xl text-approved">¡Dataset curado!</p>
     <p class="text-sm text-muted mt-1">El modelo aprendió de tus {{ progress.validated }} validaciones.</p>

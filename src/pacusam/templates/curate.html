@@ -37,8 +37,11 @@
   {# Area principal: carga la cola al abrir; image_card es el layout 2-col que llena el alto #}
   <main class="flex-1 min-h-0 flex"
         hx-get="/projects/{{ project.id }}/queue" hx-trigger="load" hx-swap="innerHTML">
-    <div id="image-card" class="flex-1 flex items-center justify-center text-faint text-sm">
-      Cargando la cola…
+    <div id="image-card" class="flex-1 flex items-center justify-center">
+      <div class="flex items-center gap-3 text-faint text-sm">
+        <span class="pacusam-spinner" aria-hidden="true"></span>
+        <span>Cargando la cola…</span>
+      </div>
     </div>
   </main>
 
