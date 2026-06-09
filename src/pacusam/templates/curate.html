@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "partials/ui.html" import filter_chips %}
 {% block title %}Curado · {{ project.name }}{% endblock %}
 {% block content %}
 {# Pantalla de curado de altura fija (sin scroll en desktop): topbar + area
@@ -43,9 +44,15 @@
 
   {# Filmstrip horizontal abajo (se actualiza OOB en cada accion) #}
   <footer class="shrink-0 border-t border-border bg-surface px-4 pt-1.5 pb-2">
-    <div class="flex items-baseline gap-2 mb-1">
-      <span class="text-[11px] uppercase tracking-wide text-faint">Cola por incertidumbre</span>
-      <span class="text-[11px] text-faint">· el recuadro azul es la próxima a etiquetar</span>
+    <div class="flex flex-wrap items-baseline justify-between gap-2 mb-1">
+      <div class="flex items-baseline gap-2">
+        <span class="text-[11px] uppercase tracking-wide text-faint">Cola por incertidumbre</span>
+        <span class="text-[11px] text-faint">· el recuadro azul es la próxima a etiquetar</span>
+      </div>
+      {# US-17: chips de filtro por clase. Se re-renderizan OOB desde el card. #}
+      <div id="filter-chips">
+        {{ filter_chips(project_id, label_counts, active_label) }}
+      </div>
     </div>
     {% include "partials/filmstrip.html" %}
   </footer>

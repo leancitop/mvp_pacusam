@@ -33,6 +33,26 @@
   </div>
 {%- endmacro %}
 
+{% macro filter_chips(project_id, label_counts, active_label=None) -%}
+  {# US-17: chips de filtro por etiqueta para el filmstrip. label_counts = list de
+     tuplas (label, count). El chip "Todas" limpia el filtro. Cada chip re-pide la
+     cola filtrada y re-renderiza la card (#image-card) con el filmstrip OOB. #}
+  {% if label_counts %}
+  <div class="flex flex-wrap items-center gap-1.5">
+    <button hx-get="/projects/{{ project_id }}/queue"
+            hx-target="#image-card" hx-swap="outerHTML"
+            class="px-2.5 py-1 text-[11px] font-medium rounded-full border transition-colors duration-150
+                   {% if not active_label %}border-accent bg-accent text-white{% else %}border-border bg-surface text-muted hover:text-ink{% endif %}">Todas</button>
+    {% for label, count in label_counts %}
+    <button hx-get="/projects/{{ project_id }}/queue?label={{ label | urlencode }}"
+            hx-target="#image-card" hx-swap="outerHTML"
+            class="px-2.5 py-1 text-[11px] font-medium rounded-full border transition-colors duration-150
+                   {% if active_label == label %}border-accent bg-accent text-white{% else %}border-border bg-surface text-muted hover:text-ink{% endif %}">{{ label }} <span class="font-mono opacity-70">{{ count }}</span></button>
+    {% endfor %}
+  </div>
+  {% endif %}
+{%- endmacro %}
+
 {% macro flash(kind='info', message='') -%}
   {% if message %}
     {% if kind == 'error' %}{% set box = 'bg-rejected-tint text-rejected border-rejected/30' %}

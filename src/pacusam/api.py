@@ -17,11 +17,13 @@ Decisiones canonicas aplicadas:
 """
 from __future__ import annotations
 
+import csv
+import io
 import os
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, Form, HTTPException, Request
-from fastapi.responses import RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
@@ -120,10 +122,13 @@ def create_app(db_path: str | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="project_not_found")
         return p
 
-    def _render_next_card(request: Request, conn, project_id: int):
+    def _render_next_card(request: Request, conn, project_id: int, label: str | None = None):
         """Fragmento HTMX que se inyecta tras cada accion (auto-avance). Devuelve la
         proxima imagen mas incierta + progreso y filmstrip OOB. Usado por
-        validate/reject/unreject y por GET /queue."""
+        validate/reject/unreject y por GET /queue.
+
+        US-17: `label` (None = todas) filtra SOLO el filmstrip; la proxima imagen
+        (queue_next) se sigue eligiendo sobre toda la cola por incertidumbre."""
         nxt = services.queue_next(conn, project_id)
         prog = services.progress(conn, project_id)
         labels = services.get_project(conn, project_id)["labels"]
@@ -134,7 +139,9 @@ def create_app(db_path: str | None = None) -> FastAPI:
             progress=prog,
             labels=labels,
             project_id=project_id,
-            filmstrip=services.queue_list(conn, project_id),
+            filmstrip=services.queue_list(conn, project_id, label),
+            label_counts=services.label_counts(conn, project_id),
+            active_label=label,
         )
 
     # (3) rutas auth (NO pasan por _guard; renderizan el form con error y status 400/401).
@@ -257,17 +264,20 @@ def create_app(db_path: str | None = None) -> FastAPI:
             image=nxt,
             labels=project["labels"],
             filmstrip=services.queue_list(conn, project_id),
+            label_counts=services.label_counts(conn, project_id),
+            active_label=None,
             progress=services.progress(conn, project_id),
             project_id=project_id,
         )
 
     @app.get("/projects/{project_id}/queue", include_in_schema=False)
     def queue_fragment(
-        project_id: int, request: Request,
+        project_id: int, request: Request, label: str | None = None,
         user=Depends(require_user), conn=Depends(get_conn),
     ):
+        # US-17: query param `label` opcional filtra el filmstrip por suggested_label.
         _owned_project(conn, project_id, user)
-        return _render_next_card(request, conn, project_id)
+        return _render_next_card(request, conn, project_id, label)
 
     @app.post("/images/{image_id}/validate", include_in_schema=False)
     def validate(
@@ -344,9 +354,52 @@ def create_app(db_path: str | None = None) -> FastAPI:
             distribution=services.class_distribution(conn, project_id),
             progress=services.progress(conn, project_id),
             time_saved=services.time_saved(conn, project_id),
+            # US-16: historial de ciclos AL (cronologico ascendente).
+            cycles=services.list_cycles(conn, project_id),
         )
 
-    # (7) re-seed determinista al arrancar, sobre la MISMA conexion (D03). Corre una
+    # (7) export del dataset curado (US-23). Ambos protegidos por _owned_project.
+    _EXPORT_COLUMNS = [
+        "filename",
+        "final_label",
+        "suggested_label",
+        "confidence",
+        "validated_at",
+    ]
+
+    @app.get("/projects/{project_id}/export.csv", include_in_schema=False)
+    def export_csv(
+        project_id: int,
+        user=Depends(require_user), conn=Depends(get_conn),
+    ):
+        project = _owned_project(conn, project_id, user)
+        rows = services.export_rows(conn, project_id)
+        buf = io.StringIO()
+        writer = csv.DictWriter(buf, fieldnames=_EXPORT_COLUMNS)
+        writer.writeheader()
+        for r in rows:
+            writer.writerow({c: r[c] for c in _EXPORT_COLUMNS})
+        filename = f"pacusam-proyecto-{project['id']}-dataset.csv"
+        return Response(
+            content=buf.getvalue(),
+            media_type="text/csv",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+
+    @app.get("/projects/{project_id}/export.json", include_in_schema=False)
+    def export_json(
+        project_id: int,
+        user=Depends(require_user), conn=Depends(get_conn),
+    ):
+        _owned_project(conn, project_id, user)
+        return JSONResponse(
+            {
+                "rows": services.export_rows(conn, project_id),
+                "summary": services.export_summary(conn, project_id),
+            }
+        )
+
+    # (8) re-seed determinista al arrancar, sobre la MISMA conexion (D03). Corre una
     # vez en build; solo siembra si projects esta vacio (no pisa datos existentes).
     seed.seed_if_empty(app.state.conn)
 

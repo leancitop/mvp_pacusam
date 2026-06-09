@@ -5,7 +5,14 @@
    - data-image-id en la raiz cuando hay imagen (integracion #10 / test D14).
    - confidence_bar / progress_bar = macros fuente unica (D11/D16).
    - else branch: micro-celebracion (D14) SIN data-image-id. #}
-{% from "partials/ui.html" import confidence_bar, progress_bar %}
+{% from "partials/ui.html" import confidence_bar, progress_bar, filter_chips %}
+{# US-17: refresca los chips de filtro OOB para reflejar la clase activa. Solo cuando
+   hay label_counts en contexto (lo pasa /queue y /curate). #}
+{% if label_counts is defined and label_counts %}
+<div id="filter-chips" hx-swap-oob="true">
+  {{ filter_chips(project_id, label_counts, active_label) }}
+</div>
+{% endif %}
 {% if image %}
 {% set other_labels = labels | reject('equalto', image.suggested_label) | list %}
 {% set _decided = progress.validated + progress.rejected %}
