@@ -77,4 +77,11 @@ def create_app(db_path: str | None = None, seed: bool = False) -> FastAPI:
     return app
 
 
-app = create_app(seed=True)
+# NOTA (CAPA 1): este api.py legacy (walking-skeleton, esquema viejo de una tabla)
+# será reescrito por la capa de presentación posterior (rutas project-scoped, auth,
+# Jinja2). Mientras tanto, su bootstrap de módulo se protege para que `import
+# pacusam.api` no rompa contra el esquema canónico nuevo de db.py/services.py.
+try:
+    app = create_app(seed=True)
+except Exception:  # pragma: no cover - shim transitorio hasta el rewrite de api.py
+    app = create_app(seed=False)
