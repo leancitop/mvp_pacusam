@@ -8,6 +8,7 @@ retrain simulado y tiempo ahorrado).
 from __future__ import annotations
 
 import json
+import random
 from datetime import datetime, timezone
 
 from . import classifier
@@ -123,23 +124,57 @@ def seed_images(conn, project_id: int, filenames: list[str]) -> int:
 
 # ============================================================ cola (Active Learning)
 
-def queue_next(conn, project_id: int) -> dict | None:
-    """Proxima imagen 'pending' del proyecto, ordenada por incertidumbre
-    = 1 - COALESCE(confidence, 0.5) DESC (la MAS dudosa primero, D19).
+# A1: estrategias de sampling soportadas. uncertainty es el default historico.
+_STRATEGIES = ("uncertainty", "sequential", "random")
 
-    Empate -> desempata por id ASC (estable). None si no quedan pendientes.
+
+def _order_rows(rows: list, strategy: str, seed: int | None) -> list:
+    """Ordena las filas segun la estrategia de sampling (A1).
+
+    - uncertainty: 1 - COALESCE(confidence, 0.5) DESC, id ASC (comportamiento actual).
+    - sequential: id ASC.
+    - random: random.Random(seed).shuffle (seed None -> seed=0, determinista).
+    Estrategia desconocida cae a uncertainty.
     """
-    row = conn.execute(
-        "SELECT * FROM images WHERE project_id = ? AND status = 'pending' "
-        "ORDER BY (1.0 - COALESCE(confidence, 0.5)) DESC, id ASC LIMIT 1",
+    items = list(rows)
+    if strategy == "sequential":
+        return sorted(items, key=lambda r: r["id"])
+    if strategy == "random":
+        rng = random.Random(0 if seed is None else seed)
+        shuffled = sorted(items, key=lambda r: r["id"])  # base estable antes de mezclar
+        rng.shuffle(shuffled)
+        return shuffled
+    # uncertainty (default): mas dudosa primero, desempata por id ASC.
+    return sorted(
+        items,
+        key=lambda r: (
+            -(1.0 - (r["confidence"] if r["confidence"] is not None else 0.5)),
+            r["id"],
+        ),
+    )
+
+
+def queue_next(
+    conn,
+    project_id: int,
+    strategy: str = "uncertainty",
+    seed: int | None = None,
+) -> dict | None:
+    """Proxima imagen 'pending' del proyecto segun la estrategia de sampling (A1).
+
+    Default 'uncertainty' = 1 - COALESCE(confidence, 0.5) DESC, id ASC (la MAS dudosa
+    primero, D19). 'sequential' = id ASC. 'random' = shuffle determinista por seed.
+    None si no quedan pendientes.
+    """
+    rows = conn.execute(
+        "SELECT * FROM images WHERE project_id = ? AND status = 'pending'",
         (project_id,),
-    ).fetchone()
-    if not row:
+    ).fetchall()
+    if not rows:
         return None
-    remaining = conn.execute(
-        "SELECT COUNT(*) c FROM images WHERE project_id = ? AND status = 'pending'",
-        (project_id,),
-    ).fetchone()["c"]
+    ordered = _order_rows(rows, strategy, seed)
+    row = ordered[0]
+    remaining = len(rows)
     conf = row["confidence"] if row["confidence"] is not None else 0.5
     return {
         "id": row["id"],
@@ -153,11 +188,19 @@ def queue_next(conn, project_id: int) -> dict | None:
     }
 
 
-def queue_list(conn, project_id: int, label: str | None = None) -> list[dict]:
-    """Todas las imagenes del proyecto, ordenadas por incertidumbre DESC (filmstrip).
+def queue_list(
+    conn,
+    project_id: int,
+    label: str | None = None,
+    strategy: str = "uncertainty",
+    seed: int | None = None,
+) -> list[dict]:
+    """Todas las imagenes del proyecto, ordenadas segun la estrategia (filmstrip).
     Incluye status para que el front pinte validadas/rechazadas/pendientes.
 
-    US-17: `label` opcional filtra por suggested_label (None = todas las clases)."""
+    US-17: `label` opcional filtra por suggested_label (None = todas las clases).
+    A1: `strategy`/`seed` opcionales al final; el default sigue siendo uncertainty.
+    """
     sql = (
         "SELECT id, filename, path, suggested_label, confidence, status, final_label "
         "FROM images WHERE project_id = ? "
@@ -166,10 +209,10 @@ def queue_list(conn, project_id: int, label: str | None = None) -> list[dict]:
     if label is not None:
         sql += "AND suggested_label = ? "
         params.append(label)
-    sql += "ORDER BY (1.0 - COALESCE(confidence, 0.5)) DESC, id ASC"
     rows = conn.execute(sql, tuple(params)).fetchall()
+    ordered = _order_rows(rows, strategy, seed)
     out = []
-    for r in rows:
+    for r in ordered:
         conf = r["confidence"] if r["confidence"] is not None else 0.5
         out.append(
             {
@@ -197,6 +240,62 @@ def label_counts(conn, project_id: int) -> list[tuple[str, int]]:
         (project_id,),
     ).fetchall()
     return [(r["label"], r["count"]) for r in rows]
+
+
+# ============================================================ gallery / bulk (C2)
+
+def gallery(conn, project_id: int, q: str | None = None, label: str | None = None) -> list[dict]:
+    """C2. Imagenes del proyecto para la vista grilla, con filtros opcionales.
+
+    `q`: substring (LIKE) sobre filename. `label`: filtra por suggested_label.
+    Devuelve [{id, filename, path, suggested_label, confidence, status, final_label}].
+    """
+    sql = (
+        "SELECT id, filename, path, suggested_label, confidence, status, final_label "
+        "FROM images WHERE project_id = ? "
+    )
+    params: list = [project_id]
+    if q:
+        sql += "AND filename LIKE ? "
+        params.append(f"%{q}%")
+    if label is not None:
+        sql += "AND suggested_label = ? "
+        params.append(label)
+    sql += "ORDER BY (1.0 - COALESCE(confidence, 0.5)) DESC, id ASC"
+    rows = conn.execute(sql, tuple(params)).fetchall()
+    out = []
+    for r in rows:
+        conf = r["confidence"] if r["confidence"] is not None else 0.5
+        out.append(
+            {
+                "id": r["id"],
+                "filename": r["filename"],
+                "path": r["path"],
+                "suggested_label": r["suggested_label"],
+                "confidence": conf,
+                "status": r["status"],
+                "final_label": r["final_label"],
+            }
+        )
+    return out
+
+
+def bulk_validate(conn, image_ids) -> int:
+    """C2. Confirma en lote la sugerencia del modelo para cada imagen (best-effort).
+
+    Para cada id valida con su propio suggested_label. try/except DomainError por id:
+    una imagen invalida (sin suggested_label, inexistente, etc.) NO aborta el lote.
+    Devuelve la cantidad efectivamente validada.
+    """
+    validated = 0
+    for image_id in image_ids:
+        try:
+            row = _image_row(conn, image_id)
+            validate_image(conn, image_id, row["suggested_label"])
+            validated += 1
+        except DomainError:
+            continue
+    return validated
 
 
 # ============================================================ validar / rechazar
@@ -268,6 +367,34 @@ def progress(conn, project_id: int) -> dict:
     }
 
 
+# ============================================================ umbral de retrain (A3)
+
+def threshold_status(conn, project_id: int) -> dict:
+    """A3. Estado del umbral de re-entrenamiento del proyecto.
+
+    Usa COALESCE(retrain_threshold, 10) para tolerar filas sin valor explicito.
+    Devuelve {threshold, validated, remaining (max 0), reached (validated>=threshold)}.
+    """
+    row = conn.execute(
+        "SELECT COALESCE(retrain_threshold, 10) AS threshold FROM projects WHERE id = ?",
+        (project_id,),
+    ).fetchone()
+    if not row:
+        raise DomainError("project_not_found", "Proyecto inexistente")
+    threshold = row["threshold"]
+    validated = conn.execute(
+        "SELECT COUNT(*) c FROM images WHERE project_id = ? AND status = 'validated'",
+        (project_id,),
+    ).fetchone()["c"]
+    remaining = max(0, threshold - validated)
+    return {
+        "threshold": threshold,
+        "validated": validated,
+        "remaining": remaining,
+        "reached": validated >= threshold,
+    }
+
+
 # ============================================================ analytics
 
 def concordance(conn, project_id: int) -> dict:
@@ -302,6 +429,85 @@ def class_distribution(conn, project_id: int) -> list[dict]:
         }
         for r in rows
     ]
+
+
+# ============================================================ calidad (B1)
+
+def _validated_pairs(conn, project_id: int) -> list[tuple[str, str]]:
+    """(suggested_label, final_label) de las imagenes validadas del proyecto."""
+    rows = conn.execute(
+        "SELECT suggested_label, final_label FROM images "
+        "WHERE project_id = ? AND status = 'validated'",
+        (project_id,),
+    ).fetchall()
+    return [(r["suggested_label"], r["final_label"]) for r in rows]
+
+
+def conflicts(conn, project_id: int) -> list[dict]:
+    """B1. Validadas donde el curador corrigio al modelo (final_label != suggested_label).
+
+    Devuelve [{id, filename, path, suggested_label, final_label, confidence}].
+    """
+    rows = conn.execute(
+        "SELECT id, filename, path, suggested_label, final_label, confidence FROM images "
+        "WHERE project_id = ? AND status = 'validated' "
+        "AND final_label IS NOT NULL AND final_label != suggested_label "
+        "ORDER BY id ASC",
+        (project_id,),
+    ).fetchall()
+    return [
+        {
+            "id": r["id"],
+            "filename": r["filename"],
+            "path": r["path"],
+            "suggested_label": r["suggested_label"],
+            "final_label": r["final_label"],
+            "confidence": r["confidence"] if r["confidence"] is not None else 0.5,
+        }
+        for r in rows
+    ]
+
+
+def confusion_matrix(conn, project_id: int) -> dict:
+    """B1. Matriz de confusion NxN sobre validadas: filas = suggested, columnas = final.
+
+    labels = labels del proyecto (orden de definicion). Caso 0-validadas -> matriz de
+    ceros (sin excepcion). Labels fuera del set se ignoran (guarda 'if lbl in labels').
+    """
+    labels = _project_labels(conn, project_id)
+    index = {lbl: i for i, lbl in enumerate(labels)}
+    matrix = [[0 for _ in labels] for _ in labels]
+    for suggested, final in _validated_pairs(conn, project_id):
+        if suggested in index and final in index:
+            matrix[index[suggested]][index[final]] += 1
+    return {"labels": labels, "matrix": matrix}
+
+
+def quality_metrics(conn, project_id: int) -> dict:
+    """B1. accuracy global + precision/recall por clase sobre validadas.
+
+    final_label = ground truth, suggested_label = prediccion del modelo.
+    precision = TP/(TP+FP), recall = TP/(TP+FN); div/0 -> 0.0. Caso 0-validadas ->
+    accuracy 0.0 y per_class con 0.0 (sin excepcion). Labels fuera del set se ignoran.
+    """
+    labels = _project_labels(conn, project_id)
+    valid = [
+        (s, f) for (s, f) in _validated_pairs(conn, project_id) if s in labels and f in labels
+    ]
+    total = len(valid)
+    agreed = sum(1 for s, f in valid if s == f)
+    accuracy = round(agreed / total, 4) if total else 0.0
+
+    per_class = []
+    for lbl in labels:
+        tp = sum(1 for s, f in valid if s == lbl and f == lbl)
+        fp = sum(1 for s, f in valid if s == lbl and f != lbl)
+        fn = sum(1 for s, f in valid if f == lbl and s != lbl)
+        precision = round(tp / (tp + fp), 4) if (tp + fp) else 0.0
+        recall = round(tp / (tp + fn), 4) if (tp + fn) else 0.0
+        per_class.append({"label": lbl, "precision": precision, "recall": recall})
+
+    return {"accuracy": accuracy, "per_class": per_class}
 
 
 # ============================================================ export dataset (US-23)
@@ -355,17 +561,24 @@ def record_cycle(
     avg_before: float,
     avg_after: float,
     improvement_pct: float,
+    *,
+    f1: float | None = None,
+    auc: float | None = None,
 ) -> dict:
     """US-16. Registra un ciclo de Active Learning en al_cycles y lo devuelve como dict.
 
     Guarda cuantas imagenes se usaron y el promedio de confianza antes/despues
     junto con el porcentaje de mejora, para el historial de la pantalla analytics.
+
+    A2: `f1`/`auc` keyword-only opcionales al final (default None). La llamada
+    posicional historica sin f1/auc sigue funcionando sin cambios.
     """
     ts = _now()
     cur = conn.execute(
         "INSERT INTO al_cycles (project_id, created_at, images_used, "
-        "avg_conf_before, avg_conf_after, improvement_pct) VALUES (?,?,?,?,?,?)",
-        (project_id, ts, images_used, avg_before, avg_after, improvement_pct),
+        "avg_conf_before, avg_conf_after, improvement_pct, f1, auc) "
+        "VALUES (?,?,?,?,?,?,?,?)",
+        (project_id, ts, images_used, avg_before, avg_after, improvement_pct, f1, auc),
     )
     conn.commit()
     row = conn.execute(
@@ -435,6 +648,11 @@ def simulate_retrain(conn, project_id: int) -> dict:
         conn.execute("UPDATE images SET confidence = ? WHERE id = ?", (nc, iid))
     conn.commit()
 
+    # A2: F1/AUC mockeados crecientes por numero de ciclo (1-based).
+    n = len(list_cycles(conn, project_id)) + 1
+    f1 = round(min(0.82 + 0.04 * n, 0.97), 3)
+    auc = round(min(0.85 + 0.035 * n, 0.98), 3)
+
     # US-16: registra el ciclo AL con los valores ya calculados.
     record_cycle(
         conn,
@@ -443,6 +661,8 @@ def simulate_retrain(conn, project_id: int) -> dict:
         round(old_avg, 4),
         round(new_avg, 4),
         improvement,
+        f1=f1,
+        auc=auc,
     )
 
     return {
@@ -497,6 +717,81 @@ def time_saved(conn, project_id: int) -> dict:
     }
 
 
+def ab_summary(conn, project_id: int) -> dict:
+    """B2. Resumen A/B (manual vs PACUSAM-AL) para la tabla comparativa.
+
+    Reusa time_saved (al_seconds/manual_seconds/saved_pct) + throughput en img/hora
+    (3s/img con AL, 30s/img manual) + concordance. Caso 0-decididas -> neutro.
+    """
+    ts = time_saved(conn, project_id)
+    conc = concordance(conn, project_id)
+    throughput_al = round(3600.0 / _AL_SECONDS_PER_IMAGE, 1)  # img/hora con AL
+    throughput_manual = round(3600.0 / _MANUAL_SECONDS_PER_IMAGE, 1)  # img/hora manual
+    return {
+        "decided": ts["decided"],
+        "al_seconds": ts["al_seconds"],
+        "manual_seconds": ts["manual_seconds"],
+        "saved_seconds": ts["saved_seconds"],
+        "saved_minutes": ts["saved_minutes"],
+        "saved_pct": ts["saved_pct"],
+        "throughput_al": throughput_al,
+        "throughput_manual": throughput_manual,
+        "concordance": conc["rate"],
+    }
+
+
+def dataset_health(conn, project_id: int) -> dict:
+    """B2. Salud/balance del dataset validado, con umbral RELATIVO al numero de clases.
+
+    ideal = 100 / n_clases. status: verde si min_pct >= ideal*0.8, amarillo si >=
+    ideal*0.5, rojo si menos. Considera todas las labels del proyecto (una clase sin
+    validadas cuenta como 0%). Caso 0-validadas -> status 'sin datos', minority None.
+    """
+    labels = _project_labels(conn, project_id)
+    dist = {d["label"]: d for d in class_distribution(conn, project_id)}
+    total = sum(d["count"] for d in dist.values())
+    n = len(labels)
+    if total == 0 or n == 0:
+        return {
+            "status": "sin datos",
+            "minority": None,
+            "ideal_pct": round(100.0 / n, 1) if n else 0.0,
+            "message": "Sin validaciones aun: la salud del dataset se calcula al curar.",
+        }
+
+    # Cada label del proyecto, con 0% si no tiene validadas.
+    per_label = []
+    for lbl in labels:
+        count = dist[lbl]["count"] if lbl in dist else 0
+        per_label.append({"label": lbl, "count": count, "percent": round(100 * count / total, 1)})
+
+    minority = min(per_label, key=lambda d: d["percent"])
+    min_pct = minority["percent"]
+    ideal = 100.0 / n
+    if min_pct >= ideal * 0.8:
+        status = "verde"
+        message = "Dataset balanceado: todas las clases bien representadas."
+    elif min_pct >= ideal * 0.5:
+        status = "amarillo"
+        message = (
+            f"Desbalance moderado: la clase '{minority['label']}' "
+            f"esta en {min_pct}% (ideal {round(ideal, 1)}%)."
+        )
+    else:
+        status = "rojo"
+        message = (
+            f"Desbalance fuerte: la clase '{minority['label']}' "
+            f"esta en {min_pct}% (ideal {round(ideal, 1)}%)."
+        )
+    return {
+        "status": status,
+        "minority": {"label": minority["label"], "percent": min_pct},
+        "ideal_pct": round(ideal, 1),
+        "distribution": per_label,
+        "message": message,
+    }
+
+
 def _elapsed_seconds(shown_at, validated_at) -> float | None:
     """Segundos entre shown_at y validated_at (ISO 8601), o None si falta alguno."""
     if not shown_at or not validated_at:
@@ -508,3 +803,53 @@ def _elapsed_seconds(shown_at, validated_at) -> float | None:
         return None
     delta = (t1 - t0).total_seconds()
     return delta if delta >= 0 else None
+
+
+# ============================================================ log de actividad (D2)
+
+def log_activity(
+    conn,
+    user_id: int,
+    action: str,
+    image_id: int | None = None,
+    project_id: int | None = None,
+) -> dict:
+    """D2/US-28. Registra una entrada de actividad con timestamp y la devuelve.
+
+    image_id/project_id opcionales (acciones como create_project no tienen imagen).
+    """
+    ts = _now()
+    cur = conn.execute(
+        "INSERT INTO activity_log (user_id, action, image_id, project_id, created_at) "
+        "VALUES (?,?,?,?,?)",
+        (user_id, action, image_id, project_id, ts),
+    )
+    conn.commit()
+    row = conn.execute(
+        "SELECT * FROM activity_log WHERE id = ?", (cur.lastrowid,)
+    ).fetchone()
+    return dict(row)
+
+
+def list_activity(
+    conn,
+    user_id: int | None = None,
+    action: str | None = None,
+    limit: int = 200,
+) -> list[dict]:
+    """D2/US-28. Lista la actividad mas reciente primero, filtrable por usuario/accion.
+
+    Desempata por id DESC para que el orden sea estable aun con timestamps iguales.
+    """
+    sql = "SELECT * FROM activity_log WHERE 1=1 "
+    params: list = []
+    if user_id is not None:
+        sql += "AND user_id = ? "
+        params.append(user_id)
+    if action is not None:
+        sql += "AND action = ? "
+        params.append(action)
+    sql += "ORDER BY created_at DESC, id DESC LIMIT ?"
+    params.append(limit)
+    rows = conn.execute(sql, tuple(params)).fetchall()
+    return [dict(r) for r in rows]

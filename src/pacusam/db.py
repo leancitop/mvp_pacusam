@@ -18,17 +18,19 @@ CREATE TABLE IF NOT EXISTS users (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
     email         TEXT UNIQUE NOT NULL,
     password_hash TEXT NOT NULL,
+    role          TEXT NOT NULL DEFAULT 'curador',  -- D1: curador | admin
     created_at    TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS projects (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    name        TEXT NOT NULL,
-    description TEXT,
-    owner_id    INTEGER NOT NULL REFERENCES users(id),
-    domain      TEXT,
-    labels      TEXT NOT NULL,          -- JSON array de strings
-    created_at  TEXT NOT NULL
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    name              TEXT NOT NULL,
+    description       TEXT,
+    owner_id          INTEGER NOT NULL REFERENCES users(id),
+    domain            TEXT,
+    labels            TEXT NOT NULL,          -- JSON array de strings
+    retrain_threshold INTEGER DEFAULT 10,     -- A3: validadas para el proximo retrain
+    created_at        TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS images (
@@ -55,7 +57,18 @@ CREATE TABLE IF NOT EXISTS al_cycles (
     images_used     INTEGER,
     avg_conf_before REAL,
     avg_conf_after  REAL,
-    improvement_pct REAL
+    improvement_pct REAL,
+    f1              REAL,   -- A2: F1 mockeado por ciclo (creciente)
+    auc             REAL    -- A2: AUC mockeado por ciclo (creciente)
+);
+
+CREATE TABLE IF NOT EXISTS activity_log (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id     INTEGER,
+    action      TEXT NOT NULL,
+    image_id    INTEGER,
+    project_id  INTEGER,
+    created_at  TEXT NOT NULL
 );
 """
 

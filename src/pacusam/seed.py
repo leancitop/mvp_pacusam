@@ -23,6 +23,10 @@ _STATIC_DATASETS = Path(__file__).parent / "static" / "datasets"
 DEMO_EMAIL = "demo@pacusam.org"
 DEMO_PASSWORD = "demo1234"
 
+# D1: admin demo (rol admin) para las vistas de administracion. Fuente unica (D02).
+ADMIN_EMAIL = "admin@pacusam.org"
+ADMIN_PASSWORD = "admin1234"
+
 # (id esperado, nombre, descripcion, domain, labels)
 DEMO_PROJECTS = [
     {
@@ -53,6 +57,15 @@ def _ensure_demo_user(conn) -> int:
     return user["id"]
 
 
+def _ensure_admin_user(conn) -> int:
+    """Crea (o devuelve) el admin demo via auth.create_user (role=admin). Idempotente."""
+    row = conn.execute("SELECT id FROM users WHERE email = ?", (ADMIN_EMAIL,)).fetchone()
+    if row:
+        return row["id"]
+    user = auth.create_user(conn, ADMIN_EMAIL, ADMIN_PASSWORD, role="admin")
+    return user["id"]
+
+
 def _ensure_project(conn, owner_id: int, spec: dict) -> int:
     """Crea (o devuelve) un proyecto por (owner_id, name). Idempotente."""
     row = conn.execute(
@@ -62,14 +75,15 @@ def _ensure_project(conn, owner_id: int, spec: dict) -> int:
     if row:
         return row["id"]
     conn.execute(
-        "INSERT INTO projects (name, description, owner_id, domain, labels, created_at) "
-        "VALUES (?,?,?,?,?,?)",
+        "INSERT INTO projects (name, description, owner_id, domain, labels, "
+        "retrain_threshold, created_at) VALUES (?,?,?,?,?,?,?)",
         (
             spec["name"],
             spec["description"],
             owner_id,
             spec["domain"],
             json.dumps(spec["labels"]),
+            20,  # A3: umbral demo de re-entrenamiento
             _now(),
         ),
     )
@@ -97,6 +111,7 @@ def _filenames_for(project_id: int) -> list[str]:
 def seed_demo(conn) -> dict:
     """Siembra el demo completo. Devuelve un resumen {user_id, projects, images_inserted}."""
     owner_id = _ensure_demo_user(conn)
+    _ensure_admin_user(conn)
     project_ids: list[int] = []
     total_images = 0
     for spec in DEMO_PROJECTS:
@@ -191,9 +206,10 @@ def _seed_live_progress(conn, project_id: int) -> None:
     conn.commit()
 
     # 2 ciclos AL de ejemplo con precision creciente (~78% -> ~84%).
+    # A2: F1/AUC keyword crecientes para el sparkline de analytics.
     used = max(n_validate, 1)
-    services.record_cycle(conn, project_id, used, 0.72, 0.78, 8.3)
-    services.record_cycle(conn, project_id, used, 0.78, 0.84, 7.7)
+    services.record_cycle(conn, project_id, used, 0.72, 0.78, 8.3, f1=0.86, auc=0.88)
+    services.record_cycle(conn, project_id, used, 0.78, 0.84, 7.7, f1=0.90, auc=0.92)
 
 
 def seed_if_empty(conn) -> bool:

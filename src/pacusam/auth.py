@@ -57,23 +57,31 @@ def verify_password(password: str, password_hash: str) -> bool:
 
 
 def _user_dict(row) -> dict:
-    """Proyeccion publica de un usuario (sin password_hash)."""
-    return {"id": row["id"], "email": row["email"], "created_at": row["created_at"]}
+    """Proyeccion publica de un usuario (sin password_hash). Incluye role (D1)."""
+    return {
+        "id": row["id"],
+        "email": row["email"],
+        "role": row["role"],
+        "created_at": row["created_at"],
+    }
 
 
-def create_user(conn, email: str, password: str) -> dict:
-    """Crea un usuario. Lanza DomainError('email_exists') si el email ya existe."""
+def create_user(conn, email: str, password: str, role: str = "curador") -> dict:
+    """Crea un usuario. Lanza DomainError('email_exists') si el email ya existe.
+
+    D1: `role` opcional (default 'curador'); 'admin' para el admin demo.
+    """
     try:
         cur = conn.execute(
-            "INSERT INTO users (email, password_hash, created_at) VALUES (?,?,?)",
-            (email, hash_password(password), _now()),
+            "INSERT INTO users (email, password_hash, role, created_at) VALUES (?,?,?,?)",
+            (email, hash_password(password), role, _now()),
         )
         conn.commit()
     except sqlite3.IntegrityError:
         conn.rollback()
         raise DomainError("email_exists", "El email ya esta registrado")
     row = conn.execute(
-        "SELECT id, email, created_at FROM users WHERE id = ?", (cur.lastrowid,)
+        "SELECT id, email, role, created_at FROM users WHERE id = ?", (cur.lastrowid,)
     ).fetchone()
     return _user_dict(row)
 
@@ -81,7 +89,7 @@ def create_user(conn, email: str, password: str) -> dict:
 def authenticate(conn, email: str, password: str) -> dict | None:
     """Devuelve el usuario (sin hash) si las credenciales son validas; None si no."""
     row = conn.execute(
-        "SELECT id, email, password_hash, created_at FROM users WHERE email = ?",
+        "SELECT id, email, password_hash, role, created_at FROM users WHERE email = ?",
         (email,),
     ).fetchone()
     if row is None:
@@ -94,6 +102,6 @@ def authenticate(conn, email: str, password: str) -> dict | None:
 def get_user(conn, user_id: int) -> dict | None:
     """Usuario por id (sin hash), o None si no existe."""
     row = conn.execute(
-        "SELECT id, email, created_at FROM users WHERE id = ?", (user_id,)
+        "SELECT id, email, role, created_at FROM users WHERE id = ?", (user_id,)
     ).fetchone()
     return _user_dict(row) if row else None
