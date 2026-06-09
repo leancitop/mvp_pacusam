@@ -43,6 +43,95 @@ Los 6 tracks se redactaron en paralelo y chocan en la capa API/UI. Estas decisio
 
 ---
 
+## 🔍 Decisiones del review (eng + CEO) — LEY, aplicar ANTES de ejecutar
+
+> Resultado del review autónomo (5 lentes eng + CEO + síntesis). **Estas decisiones son el plan ejecutable real; los cuerpos de los tracks A–G son referencia.** Donde un task contradiga esto, gana esto. Verdicto: PROCEDER. Scope recortado de 54 a ~30 tareas efectivas (ningún corte toca los 3 wow).
+
+### Camino crítico (orden de ejecución)
+`deps (una vez) → A (datos+classifier+seed+datasets) → B (design system/base.html único) → C (auth) → D (home+detalle) → E (curado) → F (AL+analytics) → G (integración/migración/QA)`
+"Si sobra tiempo" (NO bloquean demo): resumen en prosa de analytics, tests de error-path no críticos, validación server-side de password, confetti.
+
+### P0 — Contradicciones que rompen tests/demo (arreglar sí o sí)
+- **D01 `require_user` por `Depends` (no inline).** En Tasks 27/28/29 (home, POST /projects, project detail): firma `def handler(request: Request, user=Depends(require_user), conn=Depends(get_conn))`. BORRAR `user = require_user(request)` y todo `if isinstance(user, RedirectResponse): return user` (es dead code: require_user LANZA `_RedirectException`). Override de la Decisión #4.
+- **D02 Credenciales demo = fuente única.** `seed.py` exporta `DEMO_EMAIL='demo@pacusam.org'` y `DEMO_PASSWORD='demo1234'`. Tests y README los IMPORTAN (`from pacusam import seed`), nunca hardcodean. Corregir Task 50 Step 1 (`demo@pacusam.dev` → `seed.DEMO_EMAIL`).
+- **D03 Re-seed sobre la MISMA conexión.** En `create_app`: `seed.seed_if_empty(app.state.conn)` (NO abrir `db.connect` nuevo — con `:memory:` sería otra DB y la home sale vacía). Verificaciones manuales usan `PACUSAM_DB=demo.db` (archivo), no `:memory:`. Corre UNA vez en build, nunca por request.
+- **D04 Toda obtención por id va envuelta en `_guard`.** `img = _guard(services.get_image, conn, image_id)` en validate/reject/unreject (Task 36); `_guard(services.get_project, conn, project_id)` en retrain (Task 44). Sin esto, `DomainError` cruda → 500 en vez de 404 (rompe los tests `*_404` del propio plan). `analytics_page` ya lo hace bien: copiar ese patrón.
+
+### P1 — Seguridad, churn y wow de alto leverage
+- **D05 Autorización por dueño (cierra IDOR).** Nuevo helper en `api.py`: `def _owned_project(conn, project_id, user): p = _guard(services.get_project, conn, project_id); raise DomainError('project_not_found') if p['owner_id'] != user['id']; return p`. Usarlo en project_detail, curate, queue, progress, analytics, retrain; para validate/reject/unreject encadenar el check tras `get_image`. 404 (no 403) para no filtrar existencia. Sin tocar firmas de services. Test cross-user: B hace `GET /projects/{idA}` → 404. **Nueva Decisión de integración #14.**
+- **D06 Colapsar churn de integración.**
+  - **Deps UNA vez** al inicio (unión de Task 48: `fastapi, uvicorn[standard], jinja2, python-multipart, itsdangerous, passlib[bcrypt]`). Tasks 8 y 13 NO tocan requirements (solo "verificar import"). (Ejecutar Task 8 tras Task 4 borraba `python-multipart`/`itsdangerous` y rompía auth.)
+  - **`base.html` UNA vez** = Track B (Task 10). Borrar el `base.html` de Tasks 19 y 27. Find/replace de tokens en `home.html`/`project_card.html`: `accentHover→accent-hover`, `accentTint→accent-tint`, `rejectedTint→rejected-tint`, `approvedTint→approved-tint`, `flagTint→flag-tint`. Verificación: `grep -rE 'accentHover|accentTint|rejectedTint|approvedTint|flagTint' templates/` debe dar **0**.
+- **D07 Datasets = una sola tarea, scheme numérico, imágenes reales committeadas YA.** Fusionar Task 5 + 49b: descargar imágenes REALES (BCCD raw GitHub + chest x-ray público sin login) a `src/pacusam/static/datasets/1/` y `/2/` (scheme numérico que `seed.py` espera), y **commitearlas a git ahora** (cero red el día de la demo). `_placeholder_jpeg` debe generar un JPEG VÁLIDO renderizable vía Pillow (no 23 bytes) y solo como último recurso; NO silenciar pillow. Verif: `find datasets -name '*.jpeg' -size -1k | wc -l` = 0; `git status --porcelain static/datasets` muestra las imágenes trackeadas.
+- **D08 Toast de retrain vía `partials/toast.html`.** Crear `partials/toast.html` = `{% from 'partials/ui.html' import flash %}{{ flash(kind, message) }}`. Task 44 hace `TemplateResponse('partials/toast.html', ...)`. Borrar `flash.html` (template) — el macro `flash` es la fuente de estilo.
+- **D09 ⭐ Filmstrip con MINIATURAS REALES (mayor leverage).** En `queue_list` (Task 31) cada item expone `path`. En `filmstrip.html` (Task 38) reemplazar el texto por `<img src="{{ item.path }}" loading="lazy" onerror="this.src='/static/placeholder.png'" class="w-16 h-16 object-cover rounded">`, mantener borde de color por status + `u {{ item.uncertainty }}`, resaltar el activo (`ring-2 ring-accent`). Agregar `placeholder.png` liviano. Es la prueba visual de los wow #1 y #2 de un vistazo.
+- **D10 Migración BDD legacy (Task 52) a TDD + adelantar remoción del legacy.** Reescribir BDD ANTES de borrar `/seed` y `/next`. Adelantar la remoción de rutas legacy (`POST /seed` filenames-only, `GET /next`, `_DEFAULT_SEED`, `seed=True`) a Task 49. Nuevo `conftest.py` (fixture `client` sobre `create_app` con archivo + helper seed-by-SQL con `project_id`). `curado.feature` reescrito con 3 escenarios (cola por incertidumbre, validar actualiza progreso, rechazar+motivo excluye). Verif final: `pytest -q` **GLOBAL**. Quitar `no_pending_images` de `_STATUS` al borrar `/next`.
+- **D11 Frase-gancho del wow #2 (1 línea).** Banner de curado: `Etiquetaste {{ decided }} de {{ total }} — pero son las {{ decided }} que más le enseñan al modelo`.
+- **D12 Badge de tiempo ahorrado en analytics (ROI).** Nueva función en services que estima tiempo (usar `shown_at`/`validated_at` si existen; si no, mock: ~3s con AL vs ~30s manual). Mostrar 4ta tarjeta/badge: "Curaste N en ~X min — ~-80% vs etiquetado manual". + 1 test del cálculo.
+- **D13 Coherencia del retrain.** Copy del toast unificado a **"Confianza media de pendientes +X%"** (NO "precisión") en endpoint/spec/design. Cap del re-click: si `improvement_pct < 0.5` o promedio pending > 0.9 → toast "El modelo ya está bien calibrado para estas pendientes". Piso de incertidumbre: no subir pending por encima de 0.95 (preserva el orden del wow #2). + test del cap.
+- **D14 Micro-celebración al terminar la cola + test.** `image_card.html` else: "¡Dataset curado! El modelo aprendió de tus {{ n }} validaciones" + CTA a analytics (confetti opcional). Test en `test_curate_api.py`: sembrar 1 imagen, validarla, assert que la respuesta NO tiene `data-image-id` y no es 500.
+- **D15 CDNs pineados y servidos local.** Pinear versiones exactas (`alpinejs@3.14.x`, `lucide` y `htmx` exactos). Demo LOCAL → descargar Tailwind/Alpine/HTMX/Lucide a `src/pacusam/static/vendor/` y servir local (o CDN pineado con plan B). Verif Task 53: abrir offline / con throttling, 0 requests de CDN fallidos.
+
+### P2 — Robustez y DRY
+- **D16 Macros como fuente única + `templating.render` en todas las rutas.** `image_card.html` usa `{% from 'partials/ui.html' import confidence_bar %}` desde Task 38 (no inline hex). Idem `project_card.html`/`analytics.html`. Todas las rutas de C/D/E/F usan `templating.render(...)`; borrar todo `Jinja2Templates` local/`_TEMPLATES`. Si aprieta: priorizar unificar `confidence_bar` (wow #1).
+- **D17 Cortes de scope** (ver lista "CORTAR" abajo). Inlinear el banner (Task 47) en `curate.html`.
+- **D18 SQLite: WAL + busy_timeout.** En `db.connect()`: `conn.execute('PRAGMA journal_mode=WAL')` y `conn.execute('PRAGMA busy_timeout=3000')`. Conexión compartida single-user (boring, NO connection-per-request — sobre-ingeniería para MVP). Documentar limitación en README/roadmap.
+- **D19 `confidence` nunca NULL.** SCHEMA: `confidence REAL DEFAULT 0.5`. `queue_next`/`queue_list`: `COALESCE(confidence, 0.5)` en SQL y `r['confidence'] or 0.5` en Python (elimina un 500 en la pantalla estrella).
+- **D20 Manejo de errores HTMX.** En `base.html`: listener `htmx:responseError` que muestra un toast (reusa `partials/toast.html`/macro `flash`) en 422/404 (cierra el "manejo de errores en el front" que el spec pide).
+- **D21 Tests de error-path baratos** (priorizar (a) y (d)): (a) sesión→usuario borrado → 303 a /login; (b) `/progress?project_id=9999`→404, `/queue` proyecto inexistente→404, `/progress` sin param→422; (c) re-validar idempotente; (d) home sin proyectos → 200 con "Todavía no tenés proyectos".
+- **D22 Test de integración Task 49 menos frágil:** leer estado vía API (login demo + `GET /` y assert 2 nombres de proyecto), no abriendo segunda conexión.
+- **D23 Task 15 Step 3:** borrar el bloque `CREATE TABLE images` viejo (sin `project_id`/`path`). db.py SCHEMA lo escribe SOLO Track A; A corre antes que C.
+- **D24 QA de curado:** `onerror` en `<img>` (cubierto por D09); hotkey `C` abre selector cuando hay >2 labels (sangre es multiclase) o documentar que aplica con 2 labels; smoke test con browse sobre `/curate` + QA manual del teclado en Task 53 (prioridad sobre pulir analytics).
+
+### P3 — Pulido
+- **D25 Sesión:** unificar default de `secret_key` a `'dev-secret'`; `SessionMiddleware(..., same_site='lax', https_only=True)`; en `render.yaml` `PACUSAM_SECRET` con `generateValue: true`. README: sin secret seteado la sesión es forjable.
+- **D26 Password:** validación solo client-side hoy → documentar en Roadmap como decisión consciente (server-side opcional si sobra: `password_too_short` + test).
+- **D27 2 diagramas ASCII** (abajo) en la sección de arquitectura.
+- **D28** cubierto por D13 (no mover `suggested_label`; la concordancia se mantiene honesta).
+
+### CORTAR (no tocan los 3 wow)
+- Task 12 (`_ui_demo.html` + ruta `/_ui` + su test) — borrar al final (Task 53) para no explicar una ruta `_ui` si el docente abre `/docs`.
+- Task 40 como feature BDD separado — el escenario de incertidumbre va en la reescritura de `curado.feature` (Task 52). Quedan 2 features: auth + curado.
+- Steps de deps de Tasks 8/13 (colapsados en una al inicio).
+- `base.html` de Tasks 19/27 (uno solo = B).
+- Banner separado (Task 47) → inline en curate. Resumen en prosa de analytics (Task 46) → diferible.
+- Bloque `images` viejo del snippet de Task 15.
+- `_placeholder_jpeg` trunco de 23 bytes y silenciado de pillow.
+- Stretch (US-17 filtro, US-23 export) → solo Roadmap del README.
+
+### AGREGAR (barato, sube wow/calidad)
+Filmstrip miniaturas reales (D09) · badge tiempo ahorrado (D12) · frase-gancho (D11) · micro-celebración + test (D14) · onerror en imgs (D09/D24) · cap re-click + copy "confianza" (D13) · CDNs pineados/local (D15) · `_owned_project` + tests cross-user (D05) · WAL+busy_timeout (D18) · `confidence DEFAULT 0.5`+COALESCE (D19) · listener `htmx:responseError` (D20) · 2 diagramas ASCII (D27).
+
+### Diagramas (D27)
+
+**Ciclo de request a ruta protegida:**
+```
+Request ─► SessionMiddleware (lee cookie firmada PACUSAM_SECRET)
+              │ request.session["user_id"]?
+              ▼
+        require_user  [Depends]
+         ├─ sin user_id / get_user→None ─► session.clear() ─► raise _RedirectException("/login")
+         │                                          └─► exception_handler ─► RedirectResponse("/login",303)
+         └─ user válido ─► return user(dict) ─► handler corre  (+ _owned_project si es project-scoped → 404 si ajeno)
+```
+
+**Data-flow del uncertainty sampling (wow #2):**
+```
+seed_if_empty(build) ─► images.confidence (mezcla 0.50–0.99, DEFAULT 0.5)
+        ▼
+GET /projects/{id}/queue ─► queue_next: WHERE status='pending'
+                            ORDER BY (1 - COALESCE(confidence,0.5)) DESC  (la MÁS dudosa primero)
+        ▼
+image_card.html  <img src=path> + confidence_bar(macro) + data-image-id
+        │  hotkeys: A=aprobar / C=corregir / R=rechazar  (HTMX hx-post, auto-avance)
+        ▼
+POST /images/{id}/validate|reject ─► update status/final_label ─► _render_next_card ─► (re-queue_next)
+        ▼
+analytics: concordance(final==suggested) · class_distribution · tiempo ahorrado
+```
+
+---
+
 ## Track A — Fundación: data layer + classifier mock + seed + datasets
 
 ### Task 1: Migrar db.py al esquema nuevo (users/projects/images) con archivo + idempotencia
@@ -5250,3 +5339,15 @@ def test_queue_fragment_tiene_img_real(tmp_path):
 - [ ] **Step 3: Actualizar `README.md`:** comandos de setup multiplataforma (`.venv/bin/...`), cómo levantar local, credenciales demo, y la sección **Roadmap** (US no implementadas: upload real/DICOM, parámetros del clasificador, historial de ciclos, filtro/búsqueda, export/PDF, admin/roles/log).
 - [ ] **Step 4: Commit.** `git add README.md && git commit -m "docs: README con setup, demo y roadmap del MVP"`
 
+
+## GSTACK REVIEW REPORT
+
+| Review | Trigger | Why | Runs | Status | Findings |
+|--------|---------|-----|------|--------|----------|
+| Eng Review | `/plan-eng-review` | Architecture & tests (required) | 1 | issues_resolved | 5 lentes, ~49 findings; 4 P0 + IDOR P1 + churn + robustez, todos folded en "Decisiones del review" |
+| CEO Review | `/plan-ceo-review` | Scope & wow | 1 | issues_resolved | scope "demasiado" → recortado a ~30 tareas; +filmstrip miniaturas, +badge tiempo, +frase-gancho |
+
+- **MODO:** autónomo (usuario delegó decisiones; sin gates interactivos). 28 decisiones sintetizadas y aplicadas al plan como sección canónica de override.
+- **P0 resueltos:** require_user Depends (D01), creds demo única (D02), seed sobre app.state.conn (D03), _guard en get_image/get_project (D04).
+- **Seguridad:** IDOR cerrado con _owned_project (D05). Sesión: same_site/https_only + secret por env en Render (D25).
+- **VERDICT:** ENG + CEO CLEARED (issues folded) — listo para implementar vía /subagent-driven-development. Camino crítico: deps→A→B→C→D→E→F→G.
