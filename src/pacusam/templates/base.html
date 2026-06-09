@@ -252,6 +252,52 @@
     })();
   </script>
 
+  {# Visor estilo OHIF (Bundle C): helper Alpine global y reusable para la imagen
+     del card de curado. Maneja zoom (rueda + botones), pan (drag), invert y reset.
+     Las hotkeys del visor van SCOPED al contenedor (tabindex + @keydown, NO .window)
+     para no colisionar con A/C/R/Escape del curado (que usan @keydown.window). #}
+  <script>
+    window.viewer = function () {
+      return {
+        scale: 1,
+        tx: 0,
+        ty: 0,
+        invert: false,
+        dragging: false,
+        _sx: 0,
+        _sy: 0,
+        get transform() {
+          return 'translate(' + this.tx + 'px,' + this.ty + 'px) scale(' + this.scale + ')';
+        },
+        get filter() {
+          return this.invert ? 'invert(1)' : 'none';
+        },
+        zoomIn: function () { this.scale = Math.min(this.scale + 0.25, 6); },
+        zoomOut: function () {
+          this.scale = Math.max(this.scale - 0.25, 0.25);
+          if (this.scale <= 1) { this.tx = 0; this.ty = 0; }
+        },
+        onWheel: function (e) {
+          if (e.deltaY < 0) this.zoomIn(); else this.zoomOut();
+        },
+        toggleInvert: function () { this.invert = !this.invert; },
+        reset: function () { this.scale = 1; this.tx = 0; this.ty = 0; this.invert = false; },
+        startPan: function (e) {
+          if (this.scale <= 1) return;
+          this.dragging = true;
+          this._sx = e.clientX - this.tx;
+          this._sy = e.clientY - this.ty;
+        },
+        onPan: function (e) {
+          if (!this.dragging) return;
+          this.tx = e.clientX - this._sx;
+          this.ty = e.clientY - this._sy;
+        },
+        endPan: function () { this.dragging = false; },
+      };
+    };
+  </script>
+
   {% block body_extra %}{% endblock %}
 </body>
 </html>

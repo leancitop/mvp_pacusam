@@ -98,6 +98,29 @@
   <section class="mt-8 rounded-lg border border-border bg-surface p-6">
     <h2 class="font-display text-xl text-ink">Ciclos de aprendizaje activo</h2>
     <p class="mb-4 text-sm text-muted">Cada reentrenamiento simulado acerca la confianza del modelo sobre las pendientes.</p>
+
+    {# A4: sparkline de F1 por ciclo. y = (1 - f1) escalado (f1 mas alto = mas arriba).
+       f1|default(0) protege contra ciclos viejos sin la metrica. #}
+    {% if cycles %}
+    <div class="mb-5 rounded-lg border border-border bg-surface2/50 p-4">
+      <div class="flex flex-wrap items-baseline justify-between gap-2 mb-2">
+        <p class="text-sm font-medium text-ink">F1-score por ciclo</p>
+        <p class="font-mono text-sm text-approved">F1 {{ cycles[0].f1|default(0) }} -&gt; {{ cycles[-1].f1|default(0) }}</p>
+      </div>
+      {% set _w = 320 %}
+      {% set _h = 60 %}
+      {% set _n = cycles|length %}
+      <svg viewBox="0 0 {{ _w }} {{ _h }}" class="w-full h-16" preserveAspectRatio="none" role="img" aria-label="Tendencia de F1 por ciclo">
+        <polyline fill="none" stroke="#16A34A" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"
+          points="{% for c in cycles %}{{ ((loop.index0 / (_n - 1)) * _w) | round(1) if _n > 1 else (_w / 2) }},{{ ((1 - (c.f1|default(0))) * _h) | round(1) }} {% endfor %}" />
+        {% for c in cycles %}
+        <circle cx="{{ ((loop.index0 / (_n - 1)) * _w) | round(1) if _n > 1 else (_w / 2) }}"
+                cy="{{ ((1 - (c.f1|default(0))) * _h) | round(1) }}" r="2.5" fill="#16A34A" />
+        {% endfor %}
+      </svg>
+    </div>
+    {% endif %}
+
     {% if cycles %}
       {# Timeline: cada ciclo muestra la confianza subiendo (antes -> despues). El
          marcador a la izquierda y la linea vertical dan sensacion de progresion. #}
@@ -133,6 +156,154 @@
       <p class="rounded-md bg-surface2 px-4 py-6 text-center text-sm text-faint">
         Todavía no hay ciclos. Simula un reentrenamiento para empezar el historial.
       </p>
+    {% endif %}
+  </section>
+
+  {# B3: Semaforo de salud del dataset. #}
+  <section class="mt-8 rounded-lg border border-border bg-surface p-6">
+    <h2 class="font-display text-xl text-ink">Salud del dataset</h2>
+    <p class="mb-4 text-sm text-muted">Balance de clases sobre las imagenes validadas.</p>
+    <div class="flex items-start gap-3 rounded-lg border border-border bg-surface2/50 p-4">
+      {% set _dot = {'verde':'bg-approved','amarillo':'bg-flag','rojo':'bg-rejected','sin datos':'bg-faint'} %}
+      <span class="mt-1 h-3 w-3 shrink-0 rounded-full {{ _dot[health.status]|default('bg-faint') }}"></span>
+      <div class="min-w-0">
+        <p class="text-sm font-medium text-ink capitalize">{{ health.status }}</p>
+        <p class="text-sm text-muted">{{ health.message }}</p>
+      </div>
+    </div>
+  </section>
+
+  {# B3: Matriz de confusion (Sugerido filas vs Final columnas). #}
+  <section class="mt-8 rounded-lg border border-border bg-surface p-6">
+    <h2 class="font-display text-xl text-ink">Matriz de confusion</h2>
+    <p class="mb-4 text-sm text-muted">Sugerido (filas) vs Final (columnas), sobre validadas.</p>
+    {% if confusion.labels %}
+    <div class="overflow-x-auto">
+      <table class="text-sm border-collapse">
+        <thead>
+          <tr>
+            <th class="px-3 py-2 text-left text-xs font-medium text-faint">Sug \ Final</th>
+            {% for col in confusion.labels %}
+            <th class="px-3 py-2 text-center text-xs font-mono font-medium text-muted">{{ col }}</th>
+            {% endfor %}
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in confusion.labels %}
+          <tr>
+            <th class="px-3 py-2 text-left text-xs font-mono font-medium text-muted">{{ row }}</th>
+            {% set ri = loop.index0 %}
+            {% for col in confusion.labels %}
+            {% set ci = loop.index0 %}
+            {% set val = confusion.matrix[ri][ci] %}
+            <td class="px-3 py-2 text-center font-mono tabular-nums border border-border
+                       {% if ri == ci and val > 0 %}bg-approved-tint text-approved font-semibold
+                       {% elif ri != ci and val > 0 %}bg-rejected-tint text-rejected
+                       {% else %}text-faint{% endif %}">{{ val }}</td>
+            {% endfor %}
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <p class="rounded-md bg-surface2 px-4 py-6 text-center text-sm text-faint">Todavia no hay validaciones para construir la matriz.</p>
+    {% endif %}
+  </section>
+
+  {# B3: Precision / recall por clase + accuracy global (quality_metrics). #}
+  <section class="mt-8 rounded-lg border border-border bg-surface p-6">
+    <div class="flex flex-wrap items-baseline justify-between gap-2">
+      <h2 class="font-display text-xl text-ink">Precision y recall por clase</h2>
+      <p class="font-mono text-sm text-ink">Accuracy: {{ (quality.accuracy * 100) | round(1) }}%</p>
+    </div>
+    <p class="mb-4 text-sm text-muted">Tratando tu etiqueta final como verdad de referencia.</p>
+    {% if quality.per_class %}
+    <table class="w-full text-sm">
+      <thead>
+        <tr class="text-left text-xs font-medium text-muted border-b border-border">
+          <th class="py-2">Clase</th>
+          <th class="py-2 text-right">Precision</th>
+          <th class="py-2 text-right">Recall</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for pc in quality.per_class %}
+        <tr class="border-b border-border/60 last:border-0">
+          <td class="py-2 font-mono text-ink">{{ pc.label }}</td>
+          <td class="py-2 text-right font-mono tabular-nums text-muted">{{ (pc.precision * 100) | round(1) }}%</td>
+          <td class="py-2 text-right font-mono tabular-nums text-muted">{{ (pc.recall * 100) | round(1) }}%</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p class="rounded-md bg-surface2 px-4 py-6 text-center text-sm text-faint">Sin datos suficientes para calcular metricas por clase.</p>
+    {% endif %}
+  </section>
+
+  {# B3: Tabla A/B Manual vs PACUSAM-AL. #}
+  <section class="mt-8 rounded-lg border border-border bg-surface p-6">
+    <h2 class="font-display text-xl text-ink">Comparativa A/B</h2>
+    <p class="mb-4 text-sm text-muted">Etiquetado manual vs flujo PACUSAM con Active Learning, sobre {{ ab.decided }} decididas.</p>
+    <div class="overflow-x-auto">
+      <table class="w-full text-sm">
+        <thead>
+          <tr class="text-left text-xs font-medium text-muted border-b border-border">
+            <th class="py-2">Metrica</th>
+            <th class="py-2 text-right">Manual</th>
+            <th class="py-2 text-right">PACUSAM-AL</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr class="border-b border-border/60">
+            <td class="py-2 text-ink">Tiempo total</td>
+            <td class="py-2 text-right font-mono tabular-nums text-muted">~{{ (ab.manual_seconds / 60) | round(1) }} min</td>
+            <td class="py-2 text-right font-mono tabular-nums text-approved">~{{ (ab.al_seconds / 60) | round(1) }} min</td>
+          </tr>
+          <tr class="border-b border-border/60">
+            <td class="py-2 text-ink">Throughput</td>
+            <td class="py-2 text-right font-mono tabular-nums text-muted">{{ ab.throughput_manual | round(0) | int }} img/h</td>
+            <td class="py-2 text-right font-mono tabular-nums text-approved">{{ ab.throughput_al | round(0) | int }} img/h</td>
+          </tr>
+          <tr>
+            <td class="py-2 text-ink">Concordancia</td>
+            <td class="py-2 text-right font-mono tabular-nums text-faint">-</td>
+            <td class="py-2 text-right font-mono tabular-nums text-ink">{{ (ab.concordance * 100) | round(1) }}%</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    {% if ab.decided > 0 %}
+    <p class="mt-3 inline-flex items-center gap-1.5 rounded-full bg-approved-tint px-3 py-1 text-xs font-medium text-approved">
+      <i data-lucide="trending-up" class="h-3.5 w-3.5"></i> Ahorro ~{{ ab.saved_pct }}% del tiempo
+    </p>
+    {% endif %}
+    <p class="mt-3 text-xs text-faint">Consistente con MONAI Label (50-80% de reduccion del esfuerzo de anotacion).</p>
+  </section>
+
+  {# B3: Conflictos (modelo vs curador). #}
+  <section class="mt-8 rounded-lg border border-border bg-surface p-6">
+    <h2 class="font-display text-xl text-ink">Conflictos</h2>
+    <p class="mb-4 text-sm text-muted">Imagenes donde tu etiqueta no coincidio con la sugerencia del modelo.</p>
+    {% if conflicts %}
+    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+      {% for c in conflicts %}
+      <div class="flex items-center gap-3 rounded-lg border border-border bg-surface2/50 p-3">
+        <div class="h-14 w-14 shrink-0 overflow-hidden rounded bg-surface2">
+          <img src="{{ c.path }}" alt="{{ c.filename }}" loading="lazy"
+               onerror="this.onerror=null;this.src='/static/placeholder.png'"
+               class="h-14 w-14 object-cover">
+        </div>
+        <div class="min-w-0">
+          <p class="font-mono text-xs text-faint truncate">{{ c.filename }}</p>
+          <p class="text-sm text-ink mt-0.5">Modelo dijo <strong class="text-rejected">{{ c.suggested_label }}</strong>, curador dijo <strong class="text-approved">{{ c.final_label }}</strong></p>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <p class="rounded-md bg-surface2 px-4 py-6 text-center text-sm text-faint">Sin conflictos: el modelo coincidio con todas tus validaciones.</p>
     {% endif %}
   </section>
 

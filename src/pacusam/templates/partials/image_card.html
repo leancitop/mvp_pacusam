@@ -58,10 +58,54 @@
         </div>
         <p class="text-sm text-muted mb-2">Sugerencia del modelo: <strong class="text-ink">{{ image.suggested_label }}</strong></p>
         {{ confidence_bar(image.confidence) }}
+        {# Copy de incertidumbre HONESTO: proxy 1 - confianza (sin Monte Carlo). #}
+        <p class="mt-1 font-mono text-[11px] text-faint">Incertidumbre (proxy 1 - confianza): {{ image.uncertainty }}</p>
         {% if image.confidence < 0.60 %}
         <p class="text-xs text-flag mt-1">Baja confianza: el modelo duda, tu etiqueta es la que más le enseña.</p>
         {% endif %}
       </div>
+
+      {# A3/A4: contador de umbral de re-entrenamiento + mini-barra de progreso. #}
+      {% if threshold is defined and threshold %}
+      <div class="rounded-lg border border-border bg-surface2/60 p-3">
+        <div class="flex items-center justify-between text-xs mb-1.5">
+          <span class="text-muted">Hacia el proximo re-entrenamiento</span>
+          <span class="font-mono text-ink">{{ progress.validated }} / {{ threshold.threshold }}</span>
+        </div>
+        <div class="h-2 w-full overflow-hidden rounded-full bg-surface2">
+          <div class="h-2 rounded-full {% if threshold.reached %}bg-approved{% else %}bg-accent{% endif %} transition-[width] duration-300 ease-out"
+               style="width: {{ [ (progress.validated / threshold.threshold * 100) if threshold.threshold else 0, 100 ] | min | round(1) }}%"></div>
+        </div>
+        {% if threshold.reached %}
+        <p class="mt-2 text-xs text-approved">UmbralAlcanzado: el modelo se re-entrena.
+          <a href="/projects/{{ project_id }}/analytics" class="font-medium underline hover:no-underline">Ver re-entrenamiento</a>
+        </p>
+        {% else %}
+        <p class="mt-2 text-xs text-muted">{{ progress.validated }} de {{ threshold.threshold }} validadas hasta el proximo re-entrenamiento.</p>
+        {% endif %}
+      </div>
+      {% endif %}
+
+      {# C2/P2: aprobar en lote las pendientes propias con confianza alta (>90%).
+         El server arma la lista de ids; el toast confirma cuantas se aprobaron. #}
+      <button type="button"
+              hx-post="/projects/{{ project_id }}/bulk-validate"
+              hx-target="#toast-host" hx-swap="beforeend"
+              class="inline-flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium rounded-md border border-border bg-surface text-ink hover:bg-surface2 transition-colors duration-150">
+        <i data-lucide="check-check" class="h-3.5 w-3.5"></i> Aprobar pendientes con confianza &gt;90%
+      </button>
+
+      {# C1: metadata clinica mock (aire DICOM, sin pydicom). #}
+      <dl class="rounded-lg border border-border bg-surface2/40 p-3 grid grid-cols-2 gap-x-3 gap-y-1 font-mono text-[11px]">
+        <dt class="text-faint">Modality</dt>
+        <dd class="text-ink text-right">CR</dd>
+        <dt class="text-faint">Dimensions</dt>
+        <dd class="text-ink text-right">1024 x 1024</dd>
+        <dt class="text-faint">Pixel spacing</dt>
+        <dd class="text-ink text-right">0.143 mm</dd>
+        <dt class="text-faint">Study date</dt>
+        <dd class="text-ink text-right">2026-01-15</dd>
+      </dl>
 
       {# Acciones (ancladas abajo del panel) #}
       <div x-show="!rejecting" class="flex flex-col gap-2 mt-auto pt-2">
@@ -127,11 +171,52 @@
     </div>
   </aside>
 
-  {# ---------- DERECHA: imagen (llena el alto) ---------- #}
-  <div class="order-1 lg:order-2 flex-1 min-h-[45vh] lg:min-h-0 flex items-center justify-center bg-surface2 p-4">
-    <img src="{{ image.path }}" alt="{{ image.filename }}" loading="eager"
-         onerror="this.onerror=null;this.src='/static/placeholder.png'"
-         class="max-h-[55vh] lg:max-h-full max-w-full object-contain rounded-lg shadow-sm">
+  {# ---------- DERECHA: visor estilo OHIF (zoom/pan/invert/reset) ---------- #}
+  {# Hotkeys SCOPED al contenedor (tabindex + @keydown, NO .window) para no pisar
+     A/C/R/Escape del curado: "=" zoom in, "-" zoom out, "0" reset, "i" invert. #}
+  <div class="order-1 lg:order-2 flex-1 min-h-[45vh] lg:min-h-0 relative bg-black overflow-hidden"
+       x-data="viewer()" tabindex="0"
+       @wheel.prevent="onWheel($event)"
+       @mousedown="startPan($event)"
+       @mousemove.window="onPan($event)"
+       @mouseup.window="endPan()"
+       @keydown.prevent.stop="if ($event.key === '=' || $event.key === '+') zoomIn(); else if ($event.key === '-') zoomOut(); else if ($event.key === '0') reset(); else if ($event.key === 'i') toggleInvert();">
+
+    {# Toolbar flotante con iconos lucide #}
+    <div class="absolute top-3 right-3 z-10 flex flex-col gap-1 rounded-lg border border-white/10 bg-black/50 p-1 backdrop-blur">
+      <button type="button" @click="zoomIn()" title="Acercar (=)"
+              class="grid h-8 w-8 place-items-center rounded text-white/80 hover:bg-white/10 hover:text-white transition-colors duration-150">
+        <i data-lucide="zoom-in" class="h-4 w-4"></i>
+      </button>
+      <button type="button" @click="zoomOut()" title="Alejar (-)"
+              class="grid h-8 w-8 place-items-center rounded text-white/80 hover:bg-white/10 hover:text-white transition-colors duration-150">
+        <i data-lucide="zoom-out" class="h-4 w-4"></i>
+      </button>
+      <button type="button" @click="toggleInvert()" title="Invertir (i)"
+              :class="invert ? 'bg-white/20 text-white' : 'text-white/80'"
+              class="grid h-8 w-8 place-items-center rounded hover:bg-white/10 hover:text-white transition-colors duration-150">
+        <i data-lucide="contrast" class="h-4 w-4"></i>
+      </button>
+      <button type="button" @click="reset()" title="Restablecer (0)"
+              class="grid h-8 w-8 place-items-center rounded text-white/80 hover:bg-white/10 hover:text-white transition-colors duration-150">
+        <i data-lucide="rotate-ccw" class="h-4 w-4"></i>
+      </button>
+    </div>
+
+    {# Indicador de drag/move cuando hay zoom #}
+    <div x-show="scale > 1" x-cloak
+         class="absolute top-3 left-3 z-10 inline-flex items-center gap-1 rounded-md bg-black/50 px-2 py-1 text-[11px] font-mono text-white/70 backdrop-blur">
+      <i data-lucide="move" class="h-3 w-3"></i> <span x-text="scale.toFixed(2) + 'x'"></span>
+    </div>
+
+    <div class="absolute inset-0 flex items-center justify-center p-4"
+         :class="scale > 1 ? (dragging ? 'cursor-grabbing' : 'cursor-grab') : ''">
+      <img src="{{ image.path }}" alt="{{ image.filename }}" loading="eager" draggable="false"
+           onerror="this.onerror=null;this.src='/static/placeholder.png'"
+           class="max-h-[55vh] lg:max-h-full max-w-full object-contain select-none"
+           :style="{ transform: transform, filter: filter }"
+           style="transition: transform 80ms ease-out;">
+    </div>
   </div>
 
   {% include "partials/filmstrip.html" %}

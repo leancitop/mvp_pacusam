@@ -22,6 +22,19 @@
       <h1 class="font-display text-lg text-ink leading-tight truncate">Curado por incertidumbre</h1>
     </div>
     <div class="flex items-center gap-2 shrink-0">
+      {# A4: selector de estrategia de sampling. Re-dispara GET /queue?strategy=...
+         que reordena la proxima imagen (el filmstrip sigue en uncertainty). La activa
+         queda resaltada. hx-target=#image-card, swap outerHTML (auto-avance del card). #}
+      <div x-data="{ strategy: 'uncertainty' }" class="inline-flex items-center gap-1 rounded-md border border-border bg-surface p-0.5">
+        {% for opt in [('uncertainty', 'Incertidumbre'), ('random', 'Aleatoria'), ('sequential', 'Secuencial')] %}
+        <button type="button"
+                @click="strategy = '{{ opt[0] }}'"
+                hx-get="/projects/{{ project.id }}/queue?strategy={{ opt[0] }}"
+                hx-target="#image-card" hx-swap="outerHTML"
+                :class="strategy === '{{ opt[0] }}' ? 'bg-accent text-white' : 'text-muted hover:text-ink'"
+                class="px-2.5 py-1 text-xs font-medium rounded transition-colors duration-150">{{ opt[1] }}</button>
+        {% endfor %}
+      </div>
       <a href="/projects/{{ project.id }}/analytics"
          class="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-md bg-surface2 text-ink hover:bg-border transition-colors duration-150">
         <i data-lucide="bar-chart-3" class="h-4 w-4"></i> Analítica

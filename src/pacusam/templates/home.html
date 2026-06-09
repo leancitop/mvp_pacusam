@@ -6,6 +6,11 @@
   <div class="mx-auto max-w-5xl px-6 py-3 flex items-center justify-between">
     <a href="/" class="font-display text-lg font-semibold text-ink">PACUSAM</a>
     <div class="flex items-center gap-3">
+      {% if user and user.role == 'admin' %}
+      <a href="/admin" class="inline-flex items-center gap-1.5 text-sm font-medium text-accent hover:text-accent-hover transition-colors duration-150">
+        <i data-lucide="shield" class="h-4 w-4"></i> Administracion
+      </a>
+      {% endif %}
       {% if user %}<span class="text-sm text-muted hidden sm:inline">{{ user.email }}</span>{% endif %}
       <form method="post" action="/logout">
         <button class="text-sm text-muted hover:text-ink transition-colors duration-150">Salir</button>
