@@ -56,7 +56,7 @@
       <p class="text-sm text-approved">Tiempo ahorrado</p>
       {% if time_saved.decided > 0 %}
       <p class="mt-1 font-mono text-3xl text-approved">~{{ time_saved.saved_minutes }} min</p>
-      <p class="mt-1 text-xs text-muted">Curaste {{ time_saved.decided }} en ~{{ (time_saved.al_seconds / 60) | round(1) }} min — -{{ time_saved.saved_pct }}% vs etiquetado manual.</p>
+      <p class="mt-1 text-xs text-muted">Curaste {{ time_saved.decided }} en ~{{ (time_saved.al_seconds / 60) | round(1) }} min. Ahorraste ~{{ time_saved.saved_pct }}% de tiempo vs etiquetar a mano.</p>
       {% else %}
       <p class="mt-1 font-mono text-3xl text-approved">~0 min</p>
       <p class="mt-1 text-xs text-muted">Empeza a curar para medir el ahorro.</p>

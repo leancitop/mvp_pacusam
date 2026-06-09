@@ -42,6 +42,10 @@
   </script>
   {# Tailwind Play CDN 3.4.16, pineado y servido local (D15). #}
   <script src="/static/vendor/tailwind.min.js"></script>
+  {# Tokens de color/fuente como CSS real: el JIT del Play CDN servido local no
+     genera de forma confiable las clases custom (bg-accent, text-approved...).
+     Esta hoja las garantiza. Va DESPUES de Tailwind para ganar precedencia. #}
+  <link rel="stylesheet" href="/static/css/tokens.css">
 
   <style>
     body { font-feature-settings: "cv11", "ss01"; }

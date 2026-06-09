@@ -1,69 +1,54 @@
 {% extends "base.html" %}
 {% block title %}Curado · {{ project.name }}{% endblock %}
 {% block content %}
-<header class="border-b border-border bg-surface">
-  <div class="mx-auto max-w-5xl px-6 py-3 flex items-center justify-between">
-    <a href="/" class="font-display text-lg font-semibold text-ink">PACUSAM</a>
-    <div class="flex items-center gap-3">
-      {% if user %}<span class="text-sm text-muted hidden sm:inline">{{ user.email }}</span>{% endif %}
-      <form method="post" action="/logout">
-        <button class="text-sm text-muted hover:text-ink transition-colors duration-150">Salir</button>
-      </form>
-    </div>
-  </div>
-</header>
+{# Pantalla de curado de altura fija (sin scroll en desktop): topbar + area
+   principal (image_card = 2 columnas info/imagen) + filmstrip abajo. En pantallas
+   chicas se apila y permite scroll. El swap #image-card actualiza info+imagen
+   juntas; el filmstrip se actualiza OOB. #}
+<div class="flex flex-col lg:h-screen lg:overflow-hidden bg-app"
+     x-data="{ showHelp: false }"
+     @keydown.window.shift.question.prevent="showHelp = !showHelp"
+     @keydown.window.escape="showHelp = false">
 
-<main class="mx-auto max-w-5xl px-4 py-6" x-data="{ showHelp: false }"
-      @keydown.window.shift.question.prevent="showHelp = !showHelp"
-      @keydown.window.escape="showHelp = false">
-
-  <div class="flex items-center justify-between mb-4">
-    <div>
-      <nav class="text-sm text-muted mb-0.5">
+  {# Topbar compacto #}
+  <header class="shrink-0 border-b border-border bg-surface px-4 py-2 flex items-center justify-between gap-4">
+    <div class="min-w-0">
+      <nav class="text-xs text-muted leading-tight">
         <a href="/" class="hover:text-ink transition-colors">Proyectos</a>
         <span class="text-faint">/</span>
         <a href="/projects/{{ project.id }}" class="hover:text-ink transition-colors">{{ project.name }}</a>
       </nav>
-      <h1 class="font-display text-2xl text-ink">Curado por incertidumbre</h1>
-      <p class="text-sm text-muted">Active Learning · te mostramos primero lo que el modelo menos sabe.</p>
+      <h1 class="font-display text-lg text-ink leading-tight truncate">Curado por incertidumbre</h1>
     </div>
     <div class="flex items-center gap-2 shrink-0">
       <a href="/projects/{{ project.id }}/analytics"
-         class="px-3 py-2 text-sm rounded-md bg-surface2 text-ink hover:bg-border transition-colors duration-150">Analitica</a>
+         class="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-md bg-surface2 text-ink hover:bg-border transition-colors duration-150">
+        <i data-lucide="bar-chart-3" class="h-4 w-4"></i> Analítica
+      </a>
       <button @click="showHelp = true"
-              class="px-3 py-2 text-sm rounded-md bg-surface border border-border text-muted hover:text-ink transition-colors duration-150">
-        Atajos (?)
-      </button>
+              class="px-3 py-1.5 text-sm rounded-md bg-surface border border-border text-muted hover:text-ink transition-colors duration-150">Atajos (?)</button>
+      <form method="post" action="/logout">
+        <button class="px-2 py-1.5 text-sm text-muted hover:text-ink transition-colors duration-150">Salir</button>
+      </form>
     </div>
-  </div>
+  </header>
 
-  {# Frase-gancho + barra de progreso (D11). Se actualiza OOB en cada accion. #}
-  <div class="mb-5 rounded-lg border border-accent/30 bg-accent-tint px-5 py-4">
-    <div class="flex items-start gap-3">
-      <i data-lucide="trending-up" class="h-5 w-5 text-accent shrink-0 mt-0.5"></i>
-      <div class="flex-1 min-w-0">
-        <p class="text-sm font-medium text-ink">Ordenado por incertidumbre</p>
-        <p class="text-xs text-muted">Validar las imagenes donde el modelo duda es lo que mas mejora el clasificador.</p>
-        <div class="mt-3">
-          {% include "partials/progress_oob.html" %}
-        </div>
-      </div>
-    </div>
-  </div>
-
-  {# Imagen central: carga via HTMX al abrir; luego se auto-reemplaza con cada accion. #}
-  <div hx-get="/projects/{{ project.id }}/queue" hx-trigger="load" hx-swap="innerHTML">
-    <div id="image-card" class="flex items-center justify-center h-64 text-faint text-sm">
+  {# Area principal: carga la cola al abrir; image_card es el layout 2-col que llena el alto #}
+  <main class="flex-1 min-h-0 flex"
+        hx-get="/projects/{{ project.id }}/queue" hx-trigger="load" hx-swap="innerHTML">
+    <div id="image-card" class="flex-1 flex items-center justify-center text-faint text-sm">
       Cargando la cola…
     </div>
-  </div>
+  </main>
 
-  {# Filmstrip de miniaturas reales (D09). Se actualiza OOB en cada accion. #}
-  <div class="mt-6">
-    <h2 class="text-xs uppercase tracking-wide text-faint mb-2">Cola por incertidumbre</h2>
-    <p class="text-[11px] text-faint mb-2">El recuadro azul es la proxima a etiquetar.</p>
+  {# Filmstrip horizontal abajo (se actualiza OOB en cada accion) #}
+  <footer class="shrink-0 border-t border-border bg-surface px-4 pt-1.5 pb-2">
+    <div class="flex items-baseline gap-2 mb-1">
+      <span class="text-[11px] uppercase tracking-wide text-faint">Cola por incertidumbre</span>
+      <span class="text-[11px] text-faint">· el recuadro azul es la próxima a etiquetar</span>
+    </div>
     {% include "partials/filmstrip.html" %}
-  </div>
+  </footer>
 
   {# Overlay de atajos #}
   <div x-show="showHelp" x-cloak @click="showHelp = false"
@@ -80,5 +65,5 @@
               class="mt-4 w-full px-3 py-2 text-sm rounded-md bg-accent text-white hover:bg-accent-hover transition-colors duration-150">Entendido</button>
     </div>
   </div>
-</main>
+</div>
 {% endblock %}

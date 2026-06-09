@@ -1,97 +1,115 @@
-{# Card de la imagen actual del curado (wow #1). Se re-renderiza tras cada accion y
-   se inyecta via hx-target="#image-card" hx-swap="outerHTML" (auto-avance).
+{# Card de curado (wow #1) en layout 2 columnas: info/controles a la izquierda,
+   imagen grande a la derecha (llena el alto). Se re-renderiza entero tras cada
+   accion (hx-target="#image-card" hx-swap="outerHTML") -> auto-avance.
    Espera: image (dict de queue_next o None), labels (list), progress (dict), project_id.
-   - data-image-id en la raiz cuando hay imagen (integracion #10 / Track F parser).
-   - confidence_bar macro como fuente unica del umbral (D11/D16).
+   - data-image-id en la raiz cuando hay imagen (integracion #10 / test D14).
+   - confidence_bar / progress_bar = macros fuente unica (D11/D16).
    - else branch: micro-celebracion (D14) SIN data-image-id. #}
-{% from "partials/ui.html" import confidence_bar %}
+{% from "partials/ui.html" import confidence_bar, progress_bar %}
 {% if image %}
+{% set other_labels = labels | reject('equalto', image.suggested_label) | list %}
+{% set _decided = progress.validated + progress.rejected %}
 <div id="image-card" data-image-id="{{ image.id }}"
-     class="flex flex-col gap-4"
-     x-data="{ rejecting: false, reason: '' }"
+     class="flex-1 min-h-0 w-full flex flex-col lg:flex-row"
+     x-data="{ rejecting: false, correcting: false }"
      x-init="$nextTick(() => window.lucide && window.lucide.createIcons())"
      @keydown.window.a.prevent="if (!rejecting) $refs.confirmBtn && $refs.confirmBtn.click()"
-     @keydown.window.c.prevent="if (!rejecting) $refs.correctBtn && $refs.correctBtn.click()"
-     @keydown.window.r.prevent="rejecting = true"
-     @keydown.window.escape="rejecting = false">
-  <div class="bg-surface border border-border rounded-lg overflow-hidden">
-    <div class="bg-surface2 flex items-center justify-center p-4">
-      <img src="{{ image.path }}" alt="{{ image.filename }}" loading="eager"
-           onerror="this.onerror=null;this.src='/static/placeholder.png'"
-           class="max-h-[60vh] w-auto mx-auto rounded">
-    </div>
-    <div class="p-4 flex flex-col gap-3">
-      <div class="flex items-center justify-between">
-        <span class="font-mono text-sm text-muted">{{ image.filename }}</span>
-        <span class="text-xs text-faint">{{ image.remaining_pending }} pendientes</span>
+     @keydown.window.c.prevent="if (!rejecting) { {% if other_labels | length > 1 %}correcting = !correcting{% else %}$refs.correctBtn && $refs.correctBtn.click(){% endif %} }"
+     @keydown.window.r.prevent="rejecting = true; correcting = false"
+     @keydown.window.escape="rejecting = false; correcting = false">
+
+  {# ---------- IZQUIERDA: info + controles ---------- #}
+  <aside class="order-2 lg:order-1 w-full lg:w-[380px] shrink-0 border-t lg:border-t-0 lg:border-r border-border bg-surface flex flex-col overflow-y-auto">
+    <div class="p-5 flex flex-col gap-4 flex-1">
+
+      {# Banner Active Learning + progreso + frase-gancho (D11) #}
+      <div class="rounded-lg border border-accent/30 bg-accent-tint p-3">
+        <div class="flex items-start gap-2">
+          <i data-lucide="trending-up" class="h-4 w-4 text-accent shrink-0 mt-0.5"></i>
+          <div class="min-w-0">
+            <p class="text-sm font-medium text-ink">Ordenado por incertidumbre</p>
+            <p class="text-xs text-muted">Te mostramos primero lo que el modelo menos sabe.</p>
+          </div>
+        </div>
+        <div class="mt-3">
+          <div class="flex items-center justify-between text-xs mb-1">
+            <span class="text-muted">Progreso</span>
+            <span class="font-mono text-ink">{{ progress.percent }}%</span>
+          </div>
+          {{ progress_bar(progress.percent) }}
+          {% if progress.total > 0 %}
+          <p class="mt-2 text-xs text-muted">Etiquetaste <strong class="text-ink">{{ _decided }}</strong> de <strong class="text-ink">{{ progress.total }}</strong>. Son las que más le enseñan al modelo.</p>
+          {% endif %}
+        </div>
       </div>
 
-      {# Sugerencia + barra de confianza (macro = fuente unica) #}
+      {# Sugerencia + barra de confianza #}
       <div>
-        <div class="flex items-center justify-between text-xs mb-1">
-          <span class="text-muted">Sugerencia del modelo: <strong class="text-ink">{{ image.suggested_label }}</strong></span>
+        <div class="flex items-center justify-between mb-1 gap-2">
+          <span class="font-mono text-xs text-muted truncate">{{ image.filename }}</span>
+          <span class="text-xs text-faint shrink-0">{{ image.remaining_pending }} pendientes</span>
         </div>
+        <p class="text-sm text-muted mb-2">Sugerencia del modelo: <strong class="text-ink">{{ image.suggested_label }}</strong></p>
         {{ confidence_bar(image.confidence) }}
         {% if image.confidence < 0.60 %}
-        <p class="text-xs text-flag mt-1">Baja confianza — el modelo duda, tu etiqueta es la que mas le ensena.</p>
+        <p class="text-xs text-flag mt-1">Baja confianza: el modelo duda, tu etiqueta es la que más le enseña.</p>
         {% endif %}
       </div>
 
-      {# Action bar: confirmar (A) / corregir (C) / rechazar (R) #}
-      <div class="flex flex-wrap gap-2" x-show="!rejecting">
+      {# Acciones (ancladas abajo del panel) #}
+      <div x-show="!rejecting" class="flex flex-col gap-2 mt-auto pt-2">
         <button x-ref="confirmBtn"
                 hx-post="/images/{{ image.id }}/validate"
                 hx-vals='{"label": "{{ image.suggested_label }}"}'
                 hx-target="#image-card" hx-swap="outerHTML"
-                class="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium rounded-md bg-approved text-white hover:opacity-90 transition-opacity duration-150">
-          <i data-lucide="check"></i> Confirmar <kbd class="font-mono text-[10px] opacity-80">A</kbd> · {{ image.suggested_label }}
+                class="inline-flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-medium rounded-md bg-approved text-white hover:opacity-90 transition-opacity duration-150">
+          <i data-lucide="check" class="h-4 w-4"></i> Confirmar <kbd class="font-mono text-[10px] opacity-80">A</kbd> · {{ image.suggested_label }}
         </button>
 
-        {% set other_labels = labels | reject('equalto', image.suggested_label) | list %}
-        {% if other_labels | length == 1 %}
-          {# Caso binario: un solo boton de correccion directo (hotkey C). #}
+        <div class="grid grid-cols-2 gap-2">
+          {% if other_labels | length == 1 %}
           <button x-ref="correctBtn"
                   hx-post="/images/{{ image.id }}/validate"
                   hx-vals='{"label": "{{ other_labels[0] }}"}'
                   hx-target="#image-card" hx-swap="outerHTML"
-                  class="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium rounded-md bg-accent-tint text-accent hover:bg-accent hover:text-white transition-colors duration-150">
-            <i data-lucide="pencil"></i> Corregir <kbd class="font-mono text-[10px] opacity-80">C</kbd> → {{ other_labels[0] }}
+                  class="inline-flex items-center justify-center gap-1.5 px-3 py-2.5 text-sm font-medium rounded-md bg-accent-tint text-accent hover:bg-accent hover:text-white transition-colors duration-150">
+            <i data-lucide="pencil" class="h-4 w-4"></i> Corregir <kbd class="font-mono text-[10px] opacity-80">C</kbd>
           </button>
-        {% elif other_labels | length > 1 %}
-          {# Multiclase (D24): C abre el selector de etiquetas. #}
-          <div x-data="{ correcting: false }" class="relative"
-               @keydown.window.c.prevent="correcting = true">
-            <button x-ref="correctBtn" type="button" @click="correcting = !correcting"
-                    class="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium rounded-md bg-accent-tint text-accent hover:bg-accent hover:text-white transition-colors duration-150">
-              <i data-lucide="pencil"></i> Corregir <kbd class="font-mono text-[10px] opacity-80">C</kbd>
-            </button>
-            <div x-show="correcting" x-cloak @click.outside="correcting = false"
-                 class="absolute z-10 mt-1 w-48 rounded-md border border-border bg-surface shadow-sm p-1">
-              {% for label in other_labels %}
-              <button hx-post="/images/{{ image.id }}/validate"
-                      hx-vals='{"label": "{{ label }}"}'
-                      hx-target="#image-card" hx-swap="outerHTML"
-                      class="block w-full text-left px-3 py-1.5 text-sm rounded text-ink hover:bg-accent-tint hover:text-accent transition-colors duration-150">{{ label }}</button>
-              {% endfor %}
-            </div>
-          </div>
-        {% endif %}
+          {% else %}
+          <button x-ref="correctBtn" type="button" @click="correcting = !correcting"
+                  class="inline-flex items-center justify-center gap-1.5 px-3 py-2.5 text-sm font-medium rounded-md bg-accent-tint text-accent hover:bg-accent hover:text-white transition-colors duration-150">
+            <i data-lucide="pencil" class="h-4 w-4"></i> Corregir <kbd class="font-mono text-[10px] opacity-80">C</kbd>
+          </button>
+          {% endif %}
+          <button @click="rejecting = true; correcting = false"
+                  class="inline-flex items-center justify-center gap-1.5 px-3 py-2.5 text-sm font-medium rounded-md bg-rejected-tint text-rejected hover:bg-rejected hover:text-white transition-colors duration-150">
+            <i data-lucide="x" class="h-4 w-4"></i> Rechazar <kbd class="font-mono text-[10px] opacity-80">R</kbd>
+          </button>
+        </div>
 
-        <button @click="rejecting = true"
-                class="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium rounded-md bg-rejected-tint text-rejected hover:bg-rejected hover:text-white transition-colors duration-150">
-          <i data-lucide="x"></i> Rechazar <kbd class="font-mono text-[10px] opacity-80">R</kbd>
-        </button>
+        {% if other_labels | length > 1 %}
+        {# Multiclase: lista inline de etiquetas (D24) #}
+        <div x-show="correcting" x-cloak class="flex flex-wrap gap-1.5 pt-1">
+          {% for label in other_labels %}
+          <button hx-post="/images/{{ image.id }}/validate"
+                  hx-vals='{"label": "{{ label }}"}'
+                  hx-target="#image-card" hx-swap="outerHTML"
+                  class="px-2.5 py-1.5 text-xs font-medium rounded-md border border-border text-ink hover:bg-accent hover:text-white hover:border-accent transition-colors duration-150">{{ label }}</button>
+          {% endfor %}
+        </div>
+        {% endif %}
       </div>
 
       {# Panel de motivo de rechazo #}
       <form x-show="rejecting" x-cloak
             hx-post="/images/{{ image.id }}/reject"
             hx-target="#image-card" hx-swap="outerHTML"
-            class="flex flex-col gap-2 border-t border-border pt-3">
+            x-data="{ reason: '' }"
+            class="flex flex-col gap-2 mt-auto pt-3 border-t border-border">
         <label class="text-xs text-muted">Motivo del rechazo</label>
         <select name="reason" x-model="reason"
                 class="border border-border rounded-md px-2 py-2 text-sm bg-surface focus:border-accent focus:outline-none">
-          <option value="">Elegi un motivo…</option>
+          <option value="">Elegí un motivo…</option>
           <option>Imagen borrosa o de baja calidad</option>
           <option>Artefactos / posicionamiento incorrecto</option>
           <option>Fuera del dominio del proyecto</option>
@@ -100,34 +118,35 @@
         </select>
         <div class="flex gap-2">
           <button type="submit" :disabled="!reason"
-                  class="px-3 py-2 text-sm font-medium rounded-md bg-rejected text-white disabled:opacity-40 transition-opacity duration-150">
-            Confirmar rechazo
-          </button>
+                  class="flex-1 px-3 py-2 text-sm font-medium rounded-md bg-rejected text-white disabled:opacity-40 transition-opacity duration-150">Confirmar rechazo</button>
           <button type="button" @click="rejecting = false"
-                  class="px-3 py-2 text-sm font-medium rounded-md bg-surface2 text-muted hover:text-ink transition-colors duration-150">
-            Cancelar
-          </button>
+                  class="px-3 py-2 text-sm font-medium rounded-md bg-surface2 text-muted hover:text-ink transition-colors duration-150">Cancelar</button>
         </div>
       </form>
     </div>
+  </aside>
+
+  {# ---------- DERECHA: imagen (llena el alto) ---------- #}
+  <div class="order-1 lg:order-2 flex-1 min-h-[45vh] lg:min-h-0 flex items-center justify-center bg-surface2 p-4">
+    <img src="{{ image.path }}" alt="{{ image.filename }}" loading="eager"
+         onerror="this.onerror=null;this.src='/static/placeholder.png'"
+         class="max-h-[55vh] lg:max-h-full max-w-full object-contain rounded-lg shadow-sm">
   </div>
 
-  {% include "partials/progress_oob.html" %}
   {% include "partials/filmstrip.html" %}
 </div>
 {% else %}
 {# D14: micro-celebracion al terminar la cola. SIN data-image-id (lo testea D14). #}
-<div id="image-card" class="flex flex-col gap-4">
-  <div class="bg-approved-tint border border-approved/30 rounded-lg p-10 text-center">
+<div id="image-card" class="flex-1 min-h-0 w-full flex items-center justify-center p-8">
+  <div class="bg-approved-tint border border-approved/30 rounded-lg p-10 text-center max-w-md">
     <i data-lucide="party-popper" class="mx-auto h-10 w-10 text-approved"></i>
-    <p class="mt-3 font-display text-xl text-approved">Dataset curado!</p>
-    <p class="text-sm text-muted mt-1">El modelo aprendio de tus {{ progress.validated }} validaciones.</p>
+    <p class="mt-3 font-display text-xl text-approved">¡Dataset curado!</p>
+    <p class="text-sm text-muted mt-1">El modelo aprendió de tus {{ progress.validated }} validaciones.</p>
     <a href="/projects/{{ project_id }}/analytics"
        class="inline-flex items-center gap-1.5 mt-4 px-4 py-2 text-sm font-medium rounded-md bg-accent text-white hover:bg-accent-hover transition-colors duration-150">
-      <i data-lucide="bar-chart-3"></i> Ver analitica
+      <i data-lucide="bar-chart-3" class="h-4 w-4"></i> Ver analítica
     </a>
   </div>
-  {% include "partials/progress_oob.html" %}
   {% include "partials/filmstrip.html" %}
 </div>
 {% endif %}
