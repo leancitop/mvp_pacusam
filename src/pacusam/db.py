@@ -47,6 +47,16 @@ CREATE TABLE IF NOT EXISTS images (
 
 CREATE UNIQUE INDEX IF NOT EXISTS ux_images_project_filename
     ON images (project_id, filename);
+
+CREATE TABLE IF NOT EXISTS al_cycles (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id      INTEGER NOT NULL REFERENCES projects(id),
+    created_at      TEXT,
+    images_used     INTEGER,
+    avg_conf_before REAL,
+    avg_conf_after  REAL,
+    improvement_pct REAL
+);
 """
 
 

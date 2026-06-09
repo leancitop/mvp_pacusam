@@ -13,7 +13,7 @@ README y verificaciones las importan desde aqui, nunca las hardcodean.
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from . import auth, services
@@ -112,14 +112,103 @@ def seed_demo(conn) -> dict:
     }
 
 
+# Timestamp base del curado sembrado: fijo para que el re-seed sea reproducible
+# (D02/determinismo). Las decididas obtienen shown_at/validated_at derivados de
+# este ancla y su indice, asi time_saved (D12) da numeros sin depender de _now().
+_SEED_ANCHOR = datetime(2026, 6, 1, 9, 0, 0, tzinfo=timezone.utc)
+_SEED_TARGET_VALIDATED_PCT = 0.35  # ~35% validadas
+
+
+def _live_plan(total: int) -> tuple[int, int]:
+    """Cuantas rechazar y cuantas validar de forma DETERMINISTA, dejando pendientes.
+
+    Escala con el tamano del dataset: rechaza 1 si es chico, hasta 3 si es grande,
+    y valida ~35% del resto. Garantiza validadas>=1, rechazadas>=1 y pendientes>=1
+    siempre que haya al menos 3 imagenes."""
+    if total < 3:
+        return 0, 0
+    rejected = 1 if total < 8 else min(3, total // 8)
+    remaining = total - rejected
+    validated = max(1, round(total * _SEED_TARGET_VALIDATED_PCT))
+    # Dejar al menos una pendiente: no validar todo lo que queda.
+    validated = min(validated, remaining - 1)
+    return rejected, validated
+
+
+def _seed_live_progress(conn, project_id: int) -> None:
+    """Marca de forma DETERMINISTA (por indice, sin random) parte del proyecto como
+    validado/rechazado con timestamps plausibles, y registra 2 ciclos AL de ejemplo.
+
+    La mayoria de las validadas confirman la sugerencia (concordancia alta y creible
+    ~85%); unas pocas se corrigen a otra label. Re-seed reproducible: depende solo
+    del orden por id y de _SEED_ANCHOR. Deja suficientes pendientes para la demo."""
+    labels = json.loads(
+        conn.execute(
+            "SELECT labels FROM projects WHERE id = ?", (project_id,)
+        ).fetchone()["labels"]
+    )
+    images = conn.execute(
+        "SELECT id, suggested_label FROM images WHERE project_id = ? ORDER BY id",
+        (project_id,),
+    ).fetchall()
+    total = len(images)
+    n_reject, n_validate = _live_plan(total)
+
+    # Rechazos: las ultimas n_reject por id (motivo deterministico).
+    reject_reasons = ["imagen borrosa", "fuera de foco", "artefacto de captura"]
+    reject_ids = {images[total - 1 - i]["id"] for i in range(n_reject)} if n_reject else set()
+
+    # Validadas: las primeras imagenes que NO esten rechazadas.
+    validate_rows = [r for r in images if r["id"] not in reject_ids][:n_validate]
+
+    step = 0
+    for idx, r in enumerate(validate_rows):
+        suggested = r["suggested_label"] or (labels[0] if labels else "")
+        # Corregir ~1 de cada 7 para que la concordancia no sea 100% (creible).
+        if labels and len(labels) > 1 and idx % 7 == 6:
+            others = [l for l in labels if l != suggested]
+            final_label = others[idx % len(others)] if others else suggested
+        else:
+            final_label = suggested
+        shown_at = (_SEED_ANCHOR + timedelta(minutes=step)).isoformat()
+        validated_at = (_SEED_ANCHOR + timedelta(minutes=step, seconds=3)).isoformat()
+        conn.execute(
+            "UPDATE images SET status='validated', final_label=?, reject_reason=NULL, "
+            "shown_at=?, validated_at=? WHERE id=?",
+            (final_label, shown_at, validated_at, r["id"]),
+        )
+        step += 1
+
+    for i, iid in enumerate(sorted(reject_ids)):
+        shown_at = (_SEED_ANCHOR + timedelta(minutes=step)).isoformat()
+        validated_at = (_SEED_ANCHOR + timedelta(minutes=step, seconds=4)).isoformat()
+        conn.execute(
+            "UPDATE images SET status='rejected', reject_reason=?, final_label=NULL, "
+            "shown_at=?, validated_at=? WHERE id=?",
+            (reject_reasons[i % len(reject_reasons)], shown_at, validated_at, iid),
+        )
+        step += 1
+    conn.commit()
+
+    # 2 ciclos AL de ejemplo con precision creciente (~78% -> ~84%).
+    used = max(n_validate, 1)
+    services.record_cycle(conn, project_id, used, 0.72, 0.78, 8.3)
+    services.record_cycle(conn, project_id, used, 0.78, 0.84, 7.7)
+
+
 def seed_if_empty(conn) -> bool:
     """Re-seed determinista al arrancar: siembra el demo solo si no hay proyectos.
     Devuelve True si sembro, False si ya habia datos. El Track API la invoca en
-    create_app para que el deploy tenga datos al abrir sin pisar lo existente."""
+    create_app para que el deploy tenga datos al abrir sin pisar lo existente.
+
+    Ademas deja cada proyecto con progreso parcial vivo (validadas/rechazadas/
+    ciclos AL) para que analytics arranque con numeros reales, dejando pendientes."""
     count = conn.execute("SELECT COUNT(*) c FROM projects").fetchone()["c"]
     if count > 0:
         return False
-    seed_demo(conn)
+    summary = seed_demo(conn)
+    for pid in summary["projects"]:
+        _seed_live_progress(conn, pid)
     return True
 
 

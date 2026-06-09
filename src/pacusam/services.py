@@ -153,15 +153,21 @@ def queue_next(conn, project_id: int) -> dict | None:
     }
 
 
-def queue_list(conn, project_id: int) -> list[dict]:
+def queue_list(conn, project_id: int, label: str | None = None) -> list[dict]:
     """Todas las imagenes del proyecto, ordenadas por incertidumbre DESC (filmstrip).
-    Incluye status para que el front pinte validadas/rechazadas/pendientes."""
-    rows = conn.execute(
+    Incluye status para que el front pinte validadas/rechazadas/pendientes.
+
+    US-17: `label` opcional filtra por suggested_label (None = todas las clases)."""
+    sql = (
         "SELECT id, filename, path, suggested_label, confidence, status, final_label "
         "FROM images WHERE project_id = ? "
-        "ORDER BY (1.0 - COALESCE(confidence, 0.5)) DESC, id ASC",
-        (project_id,),
-    ).fetchall()
+    )
+    params: list = [project_id]
+    if label is not None:
+        sql += "AND suggested_label = ? "
+        params.append(label)
+    sql += "ORDER BY (1.0 - COALESCE(confidence, 0.5)) DESC, id ASC"
+    rows = conn.execute(sql, tuple(params)).fetchall()
     out = []
     for r in rows:
         conf = r["confidence"] if r["confidence"] is not None else 0.5
@@ -178,6 +184,19 @@ def queue_list(conn, project_id: int) -> list[dict]:
             }
         )
     return out
+
+
+def label_counts(conn, project_id: int) -> list[tuple[str, int]]:
+    """US-17. Conteo por suggested_label sobre TODAS las imagenes del proyecto
+    (cualquier status), para los chips de filtro con su numero. Lista de tuplas
+    (label, count) ordenada por count DESC, luego label ASC."""
+    rows = conn.execute(
+        "SELECT suggested_label AS label, COUNT(*) AS count FROM images "
+        "WHERE project_id = ? AND suggested_label IS NOT NULL "
+        "GROUP BY suggested_label ORDER BY count DESC, suggested_label ASC",
+        (project_id,),
+    ).fetchall()
+    return [(r["label"], r["count"]) for r in rows]
 
 
 # ============================================================ validar / rechazar
@@ -285,6 +304,85 @@ def class_distribution(conn, project_id: int) -> list[dict]:
     ]
 
 
+# ============================================================ export dataset (US-23)
+
+def export_rows(conn, project_id: int) -> list[dict]:
+    """US-23. Filas del dataset curado: SOLO validadas (no rechazadas, no pendientes).
+
+    Cada fila trae filename, final_label, suggested_label, confidence y validated_at,
+    ordenadas por validated_at para un export reproducible.
+    """
+    rows = conn.execute(
+        "SELECT filename, final_label, suggested_label, confidence, validated_at "
+        "FROM images WHERE project_id = ? AND status = 'validated' "
+        "ORDER BY validated_at ASC, id ASC",
+        (project_id,),
+    ).fetchall()
+    return [
+        {
+            "filename": r["filename"],
+            "final_label": r["final_label"],
+            "suggested_label": r["suggested_label"],
+            "confidence": r["confidence"] if r["confidence"] is not None else 0.5,
+            "validated_at": r["validated_at"],
+        }
+        for r in rows
+    ]
+
+
+def export_summary(conn, project_id: int) -> dict:
+    """US-23. Resumen del export: total de validadas + conteo por clase (final_label).
+
+    by_class es una lista [{label, count}] ordenada por count DESC, luego label ASC.
+    """
+    rows = conn.execute(
+        "SELECT final_label AS label, COUNT(*) AS count FROM images "
+        "WHERE project_id = ? AND status = 'validated' AND final_label IS NOT NULL "
+        "GROUP BY final_label ORDER BY count DESC, final_label ASC",
+        (project_id,),
+    ).fetchall()
+    by_class = [{"label": r["label"], "count": r["count"]} for r in rows]
+    total = sum(c["count"] for c in by_class)
+    return {"total": total, "by_class": by_class}
+
+
+# ============================================================ ciclos AL (US-16)
+
+def record_cycle(
+    conn,
+    project_id: int,
+    images_used: int,
+    avg_before: float,
+    avg_after: float,
+    improvement_pct: float,
+) -> dict:
+    """US-16. Registra un ciclo de Active Learning en al_cycles y lo devuelve como dict.
+
+    Guarda cuantas imagenes se usaron y el promedio de confianza antes/despues
+    junto con el porcentaje de mejora, para el historial de la pantalla analytics.
+    """
+    ts = _now()
+    cur = conn.execute(
+        "INSERT INTO al_cycles (project_id, created_at, images_used, "
+        "avg_conf_before, avg_conf_after, improvement_pct) VALUES (?,?,?,?,?,?)",
+        (project_id, ts, images_used, avg_before, avg_after, improvement_pct),
+    )
+    conn.commit()
+    row = conn.execute(
+        "SELECT * FROM al_cycles WHERE id = ?", (cur.lastrowid,)
+    ).fetchone()
+    return dict(row)
+
+
+def list_cycles(conn, project_id: int) -> list[dict]:
+    """US-16. Ciclos AL del proyecto en orden cronologico (mas antiguo primero)."""
+    rows = conn.execute(
+        "SELECT * FROM al_cycles WHERE project_id = ? ORDER BY created_at ASC, id ASC",
+        (project_id,),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
 # Piso de incertidumbre del retrain (D13): no subir pending por encima de 0.95,
 # para preservar el orden del uncertainty sampling (wow #2).
 _RETRAIN_CEILING = 0.95
@@ -336,6 +434,16 @@ def simulate_retrain(conn, project_id: int) -> dict:
     for iid, nc in boosted:
         conn.execute("UPDATE images SET confidence = ? WHERE id = ?", (nc, iid))
     conn.commit()
+
+    # US-16: registra el ciclo AL con los valores ya calculados.
+    record_cycle(
+        conn,
+        project_id,
+        len(boosted),
+        round(old_avg, 4),
+        round(new_avg, 4),
+        improvement,
+    )
 
     return {
         "improvement_pct": improvement,
