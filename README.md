@@ -16,6 +16,13 @@ Los investigadores del CIMeT dedican ~80% del tiempo a etiquetar imágenes a man
 
 Más: registro/login/logout reales, home con proyectos, rechazo con motivo (reversible), y un botón "re-entrenar" que simula un ciclo de Active Learning.
 
+### Funciones avanzadas (inspiradas en Kaapana / MONAI Label / CVAT / OHIF)
+
+- **🧠 Rigor de Active Learning:** selector de estrategia de sampling (Uncertainty / Random / Secuencial), score de incertidumbre por imagen, **curva F1/AUC ascendente por ciclo**, y contador hacia el **umbral de re-entrenamiento**.
+- **📊 Calidad y A/B:** **matriz de confusión**, precisión/recall por clase, **comparativa A/B** (curado asistido vs etiquetado manual), **salud del dataset** (semáforo de balance de clases) y lista de **conflictos** modelo↔humano.
+- **🩺 Sello clínico-pro:** **visor estilo OHIF** sobre la imagen (zoom/pan/invertir/reset por teclado `=` `-` `0` `i`), **aprobado en lote** ("aprobar pendientes con confianza >90%"), metadata clínica.
+- **🔐 Administración y trazabilidad:** **roles** (curador / admin), **log de actividad** de la plataforma, y vista de administración protegida por rol.
+
 ## Stack
 
 Python 3.10+ · **FastAPI** · **Jinja2 + HTMX + Alpine.js + Tailwind** (servidos local, sin build/npm) · **SQLite** (stdlib) · auth con `hashlib.pbkdf2_hmac` (sin dependencias C) · `pytest` + `pytest-bdd`.
@@ -35,9 +42,10 @@ Abrir **http://127.0.0.1:8000**
 
 **Credenciales demo** (sembradas automáticamente):
 
-| email | password |
-|-------|----------|
-| `demo@pacusam.org` | `demo1234` |
+| rol | email | password |
+|-----|-------|----------|
+| curador | `demo@pacusam.org` | `demo1234` |
+| administrador | `admin@pacusam.org` | `admin1234` |
 
 También podés **registrar** una cuenta nueva desde `/register` (arranca sin proyectos → muestra el empty-state).
 
@@ -89,13 +97,16 @@ Imágenes reales públicas, versionadas en el repo (demo 100% offline):
 
 `render.yaml` está listo (Blueprint). Setea `PACUSAM_SECURE_COOKIES=1`, `PACUSAM_SECRET` (generado) y `PACUSAM_DB`. El plan free de Render resetea el disco, pero el **re-seed determinista** al arrancar regenera los datos del demo.
 
-## Roadmap (no implementado en este MVP — señal de visión, no de alcance)
+## Cobertura de user stories
 
+**Hechas en el MVP:** US-01/02/03 (auth), US-04/05/06/08 (home/proyectos), US-09/10/11 (curado + navegación), US-12 (rechazo + motivo reversible), US-14 (pre-clasificación), US-16 (historial de ciclos + F1/AUC), US-17 (filtro por etiqueta), US-19 (concordancia), US-20 (tiempo de validación / ahorro), US-21 (resumen ejecutivo), US-22 (distribución de clases), US-23 (export CSV/JSON), US-26/27 (roles, vista admin), US-28 (log de actividad). El motor de AL (US-13/15) está **mockeado de forma honesta** (uncertainty sampling y métricas reales; el entrenamiento es simulado).
+
+**Roadmap (no implementado — señal de visión, no de alcance):**
 - **Subida real de imágenes + DICOM** (US-07): hoy las imágenes vienen pre-sembradas.
-- **Motor de AL real** (US-13/15/16): clasificador entrenable, parámetros configurables, historial de ciclos. Hoy es un stub + uncertainty sampling real.
-- **Filtro y búsqueda** de imágenes (US-17/18).
-- **Exportación de dataset** CSV/JSON + reportes PDF (US-23/24/25).
-- **Administración**: gestión de usuarios, roles/permisos, log de actividad (US-26/27/28).
+- **Motor de AL real** (US-13/15): clasificador entrenable con parámetros configurables. Hoy es un stub + uncertainty sampling real.
+- **Búsqueda** por id/nombre en una galería dedicada (US-18) y **filtros de export** (US-24): el backend ya existe (`gallery`, `bulk_validate`); falta la pantalla.
+- **Reportes PDF** del proyecto (US-25).
+- **Cambio de rol en vivo** desde la vista admin (hoy read-only).
 
 ## Limitaciones conocidas (decisiones conscientes de MVP)
 
