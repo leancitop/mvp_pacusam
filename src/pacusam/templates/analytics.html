@@ -1,0 +1,109 @@
+{% extends "base.html" %}
+{% from "partials/ui.html" import progress_bar %}
+{% block title %}Analitica · {{ project.name }}{% endblock %}
+{% block content %}
+<header class="border-b border-border bg-surface">
+  <div class="mx-auto max-w-5xl px-6 py-3 flex items-center justify-between">
+    <a href="/" class="font-display text-lg font-semibold text-ink">PACUSAM</a>
+    <div class="flex items-center gap-3">
+      {% if user %}<span class="text-sm text-muted hidden sm:inline">{{ user.email }}</span>{% endif %}
+      <form method="post" action="/logout">
+        <button class="text-sm text-muted hover:text-ink transition-colors duration-150">Salir</button>
+      </form>
+    </div>
+  </div>
+</header>
+
+<main class="mx-auto max-w-5xl px-6 py-8">
+  <div class="flex flex-col sm:flex-row items-start justify-between gap-4">
+    <div>
+      <nav class="text-sm text-muted mb-0.5">
+        <a href="/" class="hover:text-ink transition-colors">Proyectos</a>
+        <span class="text-faint">/</span>
+        <a href="/projects/{{ project.id }}" class="hover:text-ink transition-colors">{{ project.name }}</a>
+      </nav>
+      <h1 class="font-display text-2xl font-semibold text-ink">Analitica</h1>
+    </div>
+    <div class="flex items-center gap-2 shrink-0">
+      <a href="/projects/{{ project.id }}/curate"
+         class="rounded-md border border-border bg-surface px-3 py-2 text-sm font-medium text-ink hover:bg-surface2 transition-colors duration-150">Volver a curar</a>
+      <button hx-post="/projects/{{ project.id }}/retrain"
+              hx-target="#toast-host" hx-swap="beforeend"
+              class="inline-flex items-center gap-1.5 rounded-md bg-accent px-3 py-2 text-sm font-medium text-white hover:bg-accent-hover transition-colors duration-150">
+        <i data-lucide="refresh-cw" class="h-4 w-4"></i> Re-entrenar (simulado)
+      </button>
+    </div>
+  </div>
+
+  {# Tarjetas de resumen: concordancia, progreso, total, tiempo ahorrado (D12). #}
+  <section class="mt-6 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+    <div class="rounded-lg border border-border bg-surface p-5">
+      <p class="text-sm text-muted">Concordancia con el modelo</p>
+      <p class="mt-1 font-mono text-3xl text-ink">{{ (concordance.rate * 100) | round(1) }}%</p>
+      <p class="mt-1 text-xs text-faint">{{ concordance.agreed }} de {{ concordance.total_validated }} validadas coinciden con la sugerencia.</p>
+    </div>
+    <div class="rounded-lg border border-border bg-surface p-5">
+      <p class="text-sm text-muted">Progreso de curado</p>
+      <p class="mt-1 font-mono text-3xl text-ink">{{ progress.percent }}%</p>
+      <p class="mt-1 text-xs text-faint">{{ progress.validated }} validadas · {{ progress.rejected }} rechazadas · {{ progress.pending }} pendientes.</p>
+    </div>
+    <div class="rounded-lg border border-border bg-surface p-5">
+      <p class="text-sm text-muted">Total de imagenes</p>
+      <p class="mt-1 font-mono text-3xl text-ink">{{ progress.total }}</p>
+      <p class="mt-1 text-xs text-faint">en el dataset del proyecto.</p>
+    </div>
+    <div class="rounded-lg border border-approved/30 bg-approved-tint p-5">
+      <p class="text-sm text-approved">Tiempo ahorrado</p>
+      {% if time_saved.decided > 0 %}
+      <p class="mt-1 font-mono text-3xl text-approved">~{{ time_saved.saved_minutes }} min</p>
+      <p class="mt-1 text-xs text-muted">Curaste {{ time_saved.decided }} en ~{{ (time_saved.al_seconds / 60) | round(1) }} min — -{{ time_saved.saved_pct }}% vs etiquetado manual.</p>
+      {% else %}
+      <p class="mt-1 font-mono text-3xl text-approved">~0 min</p>
+      <p class="mt-1 text-xs text-muted">Empeza a curar para medir el ahorro.</p>
+      {% endif %}
+    </div>
+  </section>
+
+  {# Distribucion de clases con barras. #}
+  <section class="mt-8 rounded-lg border border-border bg-surface p-6">
+    <h2 class="font-display text-xl text-ink">Distribucion de clases</h2>
+    <p class="mb-4 text-sm text-muted">Etiquetas finales sobre imagenes validadas.</p>
+    {% if distribution %}
+      <div class="space-y-3">
+        {% for d in distribution %}
+        <div>
+          <div class="mb-1 flex items-center justify-between text-sm">
+            <span class="font-medium text-ink">{{ d.label }}</span>
+            <span class="font-mono text-muted">{{ d.count }} · {{ d.percent }}%</span>
+          </div>
+          <div class="h-3 w-full overflow-hidden rounded-full bg-surface2">
+            <div class="h-3 rounded-full bg-accent transition-[width] duration-150 ease-out"
+                 style="width: {{ d.percent }}%"></div>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+    {% else %}
+      <p class="rounded-md bg-surface2 px-4 py-6 text-center text-sm text-faint">
+        Todavia no hay imagenes validadas. Empeza a curar para ver la distribucion.
+      </p>
+    {% endif %}
+  </section>
+
+  {# Resumen ejecutivo. #}
+  <section class="mt-8 rounded-lg border border-border bg-surface p-6">
+    <h2 class="font-display text-xl text-ink">Resumen</h2>
+    <p class="mt-2 text-sm leading-relaxed text-muted">
+      Se validaron <strong class="text-ink">{{ progress.validated }}</strong> de
+      <strong class="text-ink">{{ progress.total }}</strong> imagenes
+      ({{ progress.percent }}% del dataset). El modelo acerto la sugerencia en el
+      <strong class="text-ink">{{ (concordance.rate * 100) | round(1) }}%</strong>
+      de los casos validados, lo que indica
+      {% if concordance.rate >= 0.8 %}una alta confiabilidad del pre-clasificador.
+      {% elif concordance.rate >= 0.5 %}un desempeno aceptable con margen de mejora.
+      {% else %}que el modelo aun requiere reentrenamiento.{% endif %}
+      Simula un reentrenamiento para proyectar la mejora de confianza sobre las pendientes.
+    </p>
+  </section>
+</main>
+{% endblock %}

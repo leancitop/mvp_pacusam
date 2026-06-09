@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+{% block title %}Curado · {{ project.name }}{% endblock %}
+{% block content %}
+<header class="border-b border-border bg-surface">
+  <div class="mx-auto max-w-5xl px-6 py-3 flex items-center justify-between">
+    <a href="/" class="font-display text-lg font-semibold text-ink">PACUSAM</a>
+    <div class="flex items-center gap-3">
+      {% if user %}<span class="text-sm text-muted hidden sm:inline">{{ user.email }}</span>{% endif %}
+      <form method="post" action="/logout">
+        <button class="text-sm text-muted hover:text-ink transition-colors duration-150">Salir</button>
+      </form>
+    </div>
+  </div>
+</header>
+
+<main class="mx-auto max-w-5xl px-4 py-6" x-data="{ showHelp: false }"
+      @keydown.window.shift.question.prevent="showHelp = !showHelp"
+      @keydown.window.escape="showHelp = false">
+
+  <div class="flex items-center justify-between mb-4">
+    <div>
+      <nav class="text-sm text-muted mb-0.5">
+        <a href="/" class="hover:text-ink transition-colors">Proyectos</a>
+        <span class="text-faint">/</span>
+        <a href="/projects/{{ project.id }}" class="hover:text-ink transition-colors">{{ project.name }}</a>
+      </nav>
+      <h1 class="font-display text-2xl text-ink">Curado por incertidumbre</h1>
+      <p class="text-sm text-muted">Active Learning · te mostramos primero lo que el modelo menos sabe.</p>
+    </div>
+    <div class="flex items-center gap-2 shrink-0">
+      <a href="/projects/{{ project.id }}/analytics"
+         class="px-3 py-2 text-sm rounded-md bg-surface2 text-ink hover:bg-border transition-colors duration-150">Analitica</a>
+      <button @click="showHelp = true"
+              class="px-3 py-2 text-sm rounded-md bg-surface border border-border text-muted hover:text-ink transition-colors duration-150">
+        Atajos (?)
+      </button>
+    </div>
+  </div>
+
+  {# Frase-gancho + barra de progreso (D11). Se actualiza OOB en cada accion. #}
+  <div class="mb-5 rounded-lg border border-accent/30 bg-accent-tint px-5 py-4">
+    <div class="flex items-start gap-3">
+      <i data-lucide="trending-up" class="h-5 w-5 text-accent shrink-0 mt-0.5"></i>
+      <div class="flex-1 min-w-0">
+        <p class="text-sm font-medium text-ink">Ordenado por incertidumbre</p>
+        <p class="text-xs text-muted">Validar las imagenes donde el modelo duda es lo que mas mejora el clasificador.</p>
+        <div class="mt-3">
+          {% include "partials/progress_oob.html" %}
+        </div>
+      </div>
+    </div>
+  </div>
+
+  {# Imagen central: carga via HTMX al abrir; luego se auto-reemplaza con cada accion. #}
+  <div hx-get="/projects/{{ project.id }}/queue" hx-trigger="load" hx-swap="innerHTML">
+    <div id="image-card" class="flex items-center justify-center h-64 text-faint text-sm">
+      Cargando la cola…
+    </div>
+  </div>
+
+  {# Filmstrip de miniaturas reales (D09). Se actualiza OOB en cada accion. #}
+  <div class="mt-6">
+    <h2 class="text-xs uppercase tracking-wide text-faint mb-2">Cola por incertidumbre</h2>
+    <p class="text-[11px] text-faint mb-2">El recuadro azul es la proxima a etiquetar.</p>
+    {% include "partials/filmstrip.html" %}
+  </div>
+
+  {# Overlay de atajos #}
+  <div x-show="showHelp" x-cloak @click="showHelp = false"
+       class="fixed inset-0 bg-black/30 flex items-center justify-center z-50">
+    <div @click.stop class="bg-surface rounded-lg border border-border p-6 w-80 shadow-sm">
+      <h3 class="font-display text-lg text-ink mb-3">Atajos de teclado</h3>
+      <ul class="text-sm text-muted space-y-2">
+        <li class="flex justify-between"><span>Confirmar sugerencia</span><kbd class="font-mono bg-surface2 px-2 rounded">A</kbd></li>
+        <li class="flex justify-between"><span>Corregir etiqueta</span><kbd class="font-mono bg-surface2 px-2 rounded">C</kbd></li>
+        <li class="flex justify-between"><span>Rechazar</span><kbd class="font-mono bg-surface2 px-2 rounded">R</kbd></li>
+        <li class="flex justify-between"><span>Cerrar / cancelar</span><kbd class="font-mono bg-surface2 px-2 rounded">Esc</kbd></li>
+      </ul>
+      <button @click="showHelp = false"
+              class="mt-4 w-full px-3 py-2 text-sm rounded-md bg-accent text-white hover:bg-accent-hover transition-colors duration-150">Entendido</button>
+    </div>
+  </div>
+</main>
+{% endblock %}
