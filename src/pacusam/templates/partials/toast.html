@@ -1,0 +1,4 @@
+{# Fragmento de toast (D08). El endpoint de retrain (Track F) devuelve este
+   template con `kind` y `message`; reusa el macro flash como fuente única de
+   estilo. Pensado para inyectarse en #toast-host vía hx-swap. #}
+{% from "partials/ui.html" import flash %}{{ flash(kind, message) }}

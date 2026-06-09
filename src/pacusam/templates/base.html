@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="es" class="h-full">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}{{ title|default("PACUSAM") }}{% endblock %}</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Lora:wght@500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+  {# Design system: tokens Tailwind. La config se setea ANTES de cargar el
+     Play CDN (Tailwind la lee del global al inicializar el JIT). D15: servido
+     local desde /static/vendor (versiones pineadas), CDN solo como plan B. #}
+  <script>
+    window.tailwind = window.tailwind || {};
+    window.tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            app:      "#FCFBF9",
+            surface:  "#FFFFFF",
+            surface2: "#F4F2EE",
+            border:   "#E7E4DE",
+            ink:      "#1A1A18",
+            muted:    "#6B6B66",
+            faint:    "#9C9A94",
+            accent:   { DEFAULT: "#2563EB", hover: "#1D4ED8", tint: "#EFF4FF" },
+            approved: { DEFAULT: "#16A34A", tint: "#ECFDF3" },
+            rejected: { DEFAULT: "#DC2626", tint: "#FEF2F2" },
+            flag:     { DEFAULT: "#D97706", tint: "#FFFBEB" },
+          },
+          fontFamily: {
+            sans:    ['Inter', 'ui-sans-serif', 'system-ui', 'sans-serif'],
+            display: ['Lora', 'ui-serif', 'Georgia', 'serif'],
+            mono:    ['"JetBrains Mono"', 'ui-monospace', 'monospace'],
+          },
+          transitionDuration: { DEFAULT: '140ms' },
+        },
+      },
+    };
+  </script>
+  {# Tailwind Play CDN 3.4.16, pineado y servido local (D15). #}
+  <script src="/static/vendor/tailwind.min.js"></script>
+
+  <style>
+    body { font-feature-settings: "cv11", "ss01"; }
+    [x-cloak] { display: none !important; }
+  </style>
+
+  {# HTMX 1.9.12 + Alpine 3.14.1, pineados y servidos local (D15). #}
+  <script defer src="/static/vendor/htmx.min.js"></script>
+  <script defer src="/static/vendor/alpine.min.js"></script>
+  {# Iconos Lucide 0.469.0 (UMD), pineado y servido local. #}
+  <script defer src="/static/vendor/lucide.min.js"></script>
+
+  {% block head_extra %}{% endblock %}
+</head>
+<body class="h-full bg-app text-ink font-sans antialiased">
+  {# Contenedor global de toasts (errores HTMX D20 + retrain D08 lo usan). #}
+  <div id="toast-host"
+       class="fixed top-4 right-4 z-50 flex flex-col gap-2 w-80 max-w-[calc(100vw-2rem)]"></div>
+
+  <div class="flex min-h-full">
+    {% block sidebar %}{% endblock %}
+    <div class="flex-1 flex flex-col min-w-0">
+      {% block flash %}{% endblock %}
+      {% block content %}{% endblock %}
+    </div>
+  </div>
+
+  {# D20: manejo de errores HTMX. Cualquier respuesta 4xx/5xx muestra un toast
+     con el detalle del error (sin recargar). Reusa el estilo del macro flash. #}
+  <script>
+    (function () {
+      function escapeHtml(s) {
+        return String(s).replace(/[&<>"']/g, function (c) {
+          return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+        });
+      }
+      function showToast(message, kind) {
+        var host = document.getElementById('toast-host');
+        if (!host) return;
+        var box = {
+          error:   'bg-rejected-tint text-rejected border-rejected/30',
+          success: 'bg-approved-tint text-approved border-approved/30',
+          flag:    'bg-flag-tint text-flag border-flag/30',
+          info:    'bg-accent-tint text-accent border-accent/30',
+        }[kind || 'info'];
+        var el = document.createElement('div');
+        el.className = 'flex items-start gap-2 rounded-lg border px-3 py-2 text-sm shadow-sm ' + box;
+        el.setAttribute('role', 'alert');
+        el.innerHTML =
+          '<span class="flex-1">' + escapeHtml(message) + '</span>' +
+          '<button type="button" class="opacity-60 hover:opacity-100 transition" aria-label="Cerrar">&times;</button>';
+        el.querySelector('button').addEventListener('click', function () { el.remove(); });
+        host.appendChild(el);
+        setTimeout(function () { el.remove(); }, 6000);
+      }
+      // Expuesto para que otros scripts/inline puedan disparar toasts.
+      window.pacusamToast = showToast;
+
+      document.body.addEventListener('htmx:responseError', function (evt) {
+        var xhr = evt.detail && evt.detail.xhr;
+        var status = xhr ? xhr.status : '';
+        var detail = '';
+        if (xhr && xhr.responseText) {
+          try {
+            var j = JSON.parse(xhr.responseText);
+            detail = j.detail || j.message || '';
+          } catch (e) {
+            // El cuerpo no es JSON (ej. un fragmento HTML); usamos un texto genérico.
+          }
+        }
+        var msg = detail || ('Ocurrió un error (' + status + '). Probá de nuevo.');
+        showToast(msg, status === 404 ? 'flag' : 'error');
+      });
+
+      document.body.addEventListener('htmx:sendError', function () {
+        showToast('No se pudo conectar con el servidor.', 'error');
+      });
+
+      // Re-renderiza los iconos Lucide tras cada swap de HTMX.
+      function renderIcons() {
+        if (window.lucide && typeof window.lucide.createIcons === 'function') {
+          window.lucide.createIcons();
+        }
+      }
+      window.addEventListener('DOMContentLoaded', renderIcons);
+      document.body.addEventListener('htmx:afterSwap', renderIcons);
+    })();
+  </script>
+
+  {% block body_extra %}{% endblock %}
+</body>
+</html>
