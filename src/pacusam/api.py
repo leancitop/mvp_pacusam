@@ -67,16 +67,20 @@ def create_app(db_path: str | None = None) -> FastAPI:
     app = FastAPI(title="PACUSAM MVP", version="1.0.0")
     app.state.conn = db.connect(db_path)
     app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
-    # D25: cookie de sesion segura (same_site=lax + https_only). En produccion
-    # (Render con HTTPS) la cookie viaja con Secure. Para tests/local-http, setear
-    # PACUSAM_INSECURE_COOKIES=1 relaja https_only para que el TestClient (http)
-    # pueda round-tripear la sesion; el default sigue siendo seguro (D25).
-    https_only = os.environ.get("PACUSAM_INSECURE_COOKIES") not in ("1", "true", "True")
+    # D25: cookie de sesion. Por defecto http-friendly: la demo local corre sobre
+    # http://localhost y la cookie de sesion debe poder round-tripear sin HTTPS.
+    # En produccion (Render, HTTPS) setear PACUSAM_SECURE_COOKIES=1 para que la
+    # cookie viaje con el flag Secure (render.yaml ya lo hace). Tests (TestClient
+    # sobre http) tambien funcionan con el default. PACUSAM_INSECURE_COOKIES se
+    # sigue respetando como override explicito por compatibilidad.
+    secure_cookies = os.environ.get("PACUSAM_SECURE_COOKIES") in ("1", "true", "True")
+    if os.environ.get("PACUSAM_INSECURE_COOKIES") in ("1", "true", "True"):
+        secure_cookies = False
     app.add_middleware(
         SessionMiddleware,
         secret_key=os.environ.get("PACUSAM_SECRET", "dev-secret"),
         same_site="lax",
-        https_only=https_only,
+        https_only=secure_cookies,
     )
 
     # (2) exception handler de _RedirectException + _guard / _STATUS.

@@ -12,3 +12,12 @@ services:
         value: src
       - key: PYTHON_VERSION
         value: "3.12.7"
+      # Persistencia a archivo (Render free resetea disco -> re-seed determinista al arrancar).
+      - key: PACUSAM_DB
+        value: pacusam.db
+      # Cookie de sesion segura (Render sirve por HTTPS). D25.
+      - key: PACUSAM_SECURE_COOKIES
+        value: "1"
+      # Secreto de sesion generado por Render (no hardcodear). D25.
+      - key: PACUSAM_SECRET
+        generateValue: true
