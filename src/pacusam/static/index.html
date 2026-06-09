@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>PACUSAM — Curado</title>
+  <style>
+    :root { --bg:#0f172a; --card:#1e293b; --accent:#38bdf8; --ok:#22c55e; --warn:#f59e0b; --text:#e2e8f0; --muted:#94a3b8; }
+    * { box-sizing: border-box; }
+    body { margin:0; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+           background: var(--bg); color: var(--text); min-height:100vh; }
+    header { padding: 20px 24px; border-bottom: 1px solid #334155; }
+    header h1 { margin:0; font-size: 20px; }
+    header p { margin: 4px 0 0; color: var(--muted); font-size: 13px; }
+    .wrap { max-width: 560px; margin: 0 auto; padding: 24px; }
+    .progress { margin-bottom: 20px; }
+    .bar { height: 10px; background:#334155; border-radius: 6px; overflow:hidden; }
+    .bar > div { height:100%; background: var(--ok); width:0%; transition: width .3s; }
+    .progress small { color: var(--muted); display:block; margin-top:6px; }
+    .card { background: var(--card); border:1px solid #334155; border-radius: 12px; padding: 24px; }
+    .thumb { background:#0b1220; border:1px dashed #475569; border-radius:8px; height:160px;
+             display:flex; align-items:center; justify-content:center; color:var(--muted);
+             font-family: ui-monospace, monospace; font-size:13px; text-align:center; padding:12px; }
+    .filename { margin-top:14px; font-family: ui-monospace, monospace; font-size:13px; color:var(--muted); }
+    .suggest { margin:18px 0; }
+    .suggest .label { font-size: 22px; font-weight: 700; text-transform: capitalize; }
+    .suggest .conf { color: var(--muted); font-size: 13px; }
+    .hint { color: var(--muted); font-size: 13px; margin: 10px 0 16px; }
+    .btns { display:flex; gap:10px; flex-wrap:wrap; }
+    button { flex:1; min-width:120px; padding:12px 14px; border-radius:8px; border:1px solid #475569;
+             background:#0b1220; color:var(--text); font-size:14px; cursor:pointer; }
+    button:hover { border-color: var(--accent); }
+    button.primary { background: var(--accent); color:#0b1220; border-color:var(--accent); font-weight:700; }
+    .done { text-align:center; padding:40px 20px; }
+    .done .big { font-size: 40px; }
+    footer { text-align:center; color:var(--muted); font-size:12px; padding: 20px; }
+    footer a { color: var(--accent); }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>PACUSAM — Curado de imágenes</h1>
+    <p>El modelo propone, vos validás. (MVP · iteración 1 · datos mockeados)</p>
+  </header>
+
+  <div class="wrap">
+    <div class="progress">
+      <div class="bar"><div id="bar"></div></div>
+      <small id="progress-text">Cargando…</small>
+    </div>
+
+    <div id="content"><div class="card">Cargando…</div></div>
+  </div>
+
+  <footer>
+    API: <a href="/docs">/docs</a> · PACUSAM Grupo 9 · Ingeniería de Software UNSAM
+  </footer>
+
+  <script>
+    const LABELS = ["normal", "anomalia"];
+
+    async function refreshProgress() {
+      const p = await (await fetch("/progress")).json();
+      document.getElementById("bar").style.width = p.percent + "%";
+      document.getElementById("progress-text").textContent =
+        `${p.labeled} de ${p.total} validadas (${p.percent}%) · ${p.pending} pendientes`;
+    }
+
+    async function loadNext() {
+      const content = document.getElementById("content");
+      const res = await fetch("/next");
+
+      if (res.status === 404) {
+        content.innerHTML = `<div class="card done">
+          <div class="big">✅</div>
+          <h2>No quedan imágenes pendientes</h2>
+          <p style="color:var(--muted)">Curado completo. Revisá el progreso arriba.</p>
+        </div>`;
+        return;
+      }
+
+      const img = await res.json();
+      const conf = Math.round(img.confidence * 100);
+      const buttons = LABELS.map(l => {
+        const isSuggested = l === img.suggested_label;
+        return `<button class="${isSuggested ? "primary" : ""}" onclick="validate(${img.id}, '${l}')">
+                  ${isSuggested ? "Confirmar" : "Corregir a"} "${l}"
+                </button>`;
+      }).join("");
+
+      content.innerHTML = `<div class="card">
+        <div class="thumb">[ imagen mockeada ]<br/>${img.filename}</div>
+        <div class="filename">📄 ${img.filename} · quedan ${img.remaining_pending} pendientes</div>
+        <div class="suggest">
+          <div style="color:var(--muted);font-size:13px;margin-bottom:4px">Sugerencia del modelo</div>
+          <div class="label">${img.suggested_label}</div>
+          <div class="conf">confianza ${conf}%</div>
+        </div>
+        <div class="hint">Confirmá la sugerencia o corregila eligiendo otra etiqueta.</div>
+        <div class="btns">${buttons}</div>
+      </div>`;
+    }
+
+    async function validate(id, label) {
+      await fetch(`/images/${id}/validate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ label })
+      });
+      await refreshProgress();
+      await loadNext();
+    }
+
+    refreshProgress();
+    loadNext();
+  </script>
+</body>
+</html>

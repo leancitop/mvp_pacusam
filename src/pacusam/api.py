@@ -2,12 +2,15 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException
-from fastapi.responses import RedirectResponse
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from . import db, services
+
+_STATIC = Path(__file__).parent / "static"
 
 _STATUS = {"image_not_found": 404, "label_required": 422}
 
@@ -44,7 +47,7 @@ def create_app(db_path: str | None = None, seed: bool = False) -> FastAPI:
 
     @app.get("/", include_in_schema=False)
     def root():
-        return RedirectResponse(url="/docs")
+        return FileResponse(_STATIC / "index.html")
 
     def _guard(fn, *args):
         try:
