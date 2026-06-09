@@ -22,7 +22,7 @@ import io
 import os
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, Form, HTTPException, Request
+from fastapi import Depends, FastAPI, Form, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
@@ -114,6 +114,13 @@ def create_app(db_path: str | None = None) -> FastAPI:
             raise _RedirectException("/login")
         return user
 
+    def require_admin(user=Depends(require_user)) -> dict:
+        """D3. Dependency admin: reusa require_user (no-auth -> 303 /login) y exige
+        role=='admin' (sino 403). El dict de require_user ya trae 'role' (D1)."""
+        if user.get("role") != "admin":
+            raise HTTPException(status_code=403, detail="forbidden")
+        return user
+
     def _owned_project(conn, project_id: int, user: dict) -> dict:
         """Autorizacion por dueño (D05 / integracion #14). 404 (no 403) si el proyecto
         no existe o es de otro usuario, para no filtrar existencia."""
@@ -122,14 +129,31 @@ def create_app(db_path: str | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="project_not_found")
         return p
 
-    def _render_next_card(request: Request, conn, project_id: int, label: str | None = None):
-        """Fragmento HTMX que se inyecta tras cada accion (auto-avance). Devuelve la
-        proxima imagen mas incierta + progreso y filmstrip OOB. Usado por
-        validate/reject/unreject y por GET /queue.
+    # A1: estrategias de sampling validas. Una desconocida cae a uncertainty.
+    _STRATEGIES = ("uncertainty", "sequential", "random")
 
-        US-17: `label` (None = todas) filtra SOLO el filmstrip; la proxima imagen
-        (queue_next) se sigue eligiendo sobre toda la cola por incertidumbre."""
-        nxt = services.queue_next(conn, project_id)
+    def _norm_strategy(strategy: str | None) -> str:
+        """Normaliza la estrategia de sampling: invalida/None -> uncertainty (A1)."""
+        return strategy if strategy in _STRATEGIES else "uncertainty"
+
+    def _render_next_card(
+        request: Request,
+        conn,
+        project_id: int,
+        label: str | None = None,
+        strategy: str = "uncertainty",
+    ):
+        """Fragmento HTMX que se inyecta tras cada accion (auto-avance). Devuelve la
+        proxima imagen + progreso y filmstrip OOB. Usado por validate/reject/unreject
+        y por GET /queue.
+
+        US-17: `label` (None = todas) filtra SOLO el filmstrip.
+        A1: `strategy` SOLO afecta a queue_next (la proxima imagen). El filmstrip
+        (queue_list) SIEMPRE usa uncertainty para no romper test_api_filter/services;
+        validate/reject/unreject no propagan strategy (el auto-avance vuelve a
+        uncertainty, aceptable para el MVP)."""
+        active_strategy = _norm_strategy(strategy)
+        nxt = services.queue_next(conn, project_id, strategy=active_strategy)
         prog = services.progress(conn, project_id)
         labels = services.get_project(conn, project_id)["labels"]
         return templating.render(
@@ -142,7 +166,20 @@ def create_app(db_path: str | None = None) -> FastAPI:
             filmstrip=services.queue_list(conn, project_id, label),
             label_counts=services.label_counts(conn, project_id),
             active_label=label,
+            threshold=services.threshold_status(conn, project_id),
+            active_strategy=active_strategy,
         )
+
+    def _log(conn, user: dict, action: str, image_id=None, project_id=None) -> None:
+        """D2/US-28. Helper best-effort: registra actividad sin propagar NUNCA una
+        excepcion (el log no debe tumbar una accion ya exitosa). Se llama solo tras
+        un _guard exitoso, con el user de sesion."""
+        try:
+            services.log_activity(
+                conn, user["id"], action, image_id=image_id, project_id=project_id
+            )
+        except Exception:
+            pass
 
     # (3) rutas auth (NO pasan por _guard; renderizan el form con error y status 400/401).
     @app.get("/login", include_in_schema=False)
@@ -272,12 +309,17 @@ def create_app(db_path: str | None = None) -> FastAPI:
 
     @app.get("/projects/{project_id}/queue", include_in_schema=False)
     def queue_fragment(
-        project_id: int, request: Request, label: str | None = None,
+        project_id: int, request: Request,
+        label: str | None = None, strategy: str | None = None,
         user=Depends(require_user), conn=Depends(get_conn),
     ):
         # US-17: query param `label` opcional filtra el filmstrip por suggested_label.
+        # A1: query param `strategy` opcional reordena SOLO la proxima imagen
+        # (queue_next); se valida en {uncertainty, random, sequential} (sino uncertainty).
         _owned_project(conn, project_id, user)
-        return _render_next_card(request, conn, project_id, label)
+        return _render_next_card(
+            request, conn, project_id, label, strategy=_norm_strategy(strategy)
+        )
 
     @app.post("/images/{image_id}/validate", include_in_schema=False)
     def validate(
@@ -287,6 +329,7 @@ def create_app(db_path: str | None = None) -> FastAPI:
         img = _guard(services.get_image, conn, image_id)
         _owned_project(conn, img["project_id"], user)
         _guard(services.validate_image, conn, image_id, label)
+        _log(conn, user, "validate", image_id=image_id, project_id=img["project_id"])
         return _render_next_card(request, conn, img["project_id"])
 
     @app.post("/images/{image_id}/reject", include_in_schema=False)
@@ -297,6 +340,7 @@ def create_app(db_path: str | None = None) -> FastAPI:
         img = _guard(services.get_image, conn, image_id)
         _owned_project(conn, img["project_id"], user)
         _guard(services.reject_image, conn, image_id, reason)
+        _log(conn, user, "reject", image_id=image_id, project_id=img["project_id"])
         return _render_next_card(request, conn, img["project_id"])
 
     @app.post("/images/{image_id}/unreject", include_in_schema=False)
@@ -307,6 +351,7 @@ def create_app(db_path: str | None = None) -> FastAPI:
         img = _guard(services.get_image, conn, image_id)
         _owned_project(conn, img["project_id"], user)
         _guard(services.unreject_image, conn, image_id)
+        _log(conn, user, "unreject", image_id=image_id, project_id=img["project_id"])
         return _render_next_card(request, conn, img["project_id"])
 
     @app.get("/progress", include_in_schema=False)
@@ -339,6 +384,51 @@ def create_app(db_path: str | None = None) -> FastAPI:
             request, "partials/toast.html", kind=kind, message=message
         )
 
+    @app.post("/projects/{project_id}/bulk-validate", include_in_schema=False)
+    def bulk_validate_action(
+        project_id: int, request: Request,
+        ids: list[str] = Form(default=[]),
+        user=Depends(require_user), conn=Depends(get_conn),
+    ):
+        """C2/P2. Aprueba pendientes en lote confirmando la sugerencia del modelo.
+
+        Sin `ids` en el form: el server arma la lista de pendientes PROPIAS con
+        confidence>=0.9 (el boton "aprobar pendientes >90%"). Con `ids`: FIX IDOR,
+        se filtran al proyecto (WHERE project_id=? AND id IN(...)) ANTES de validar,
+        asi un id ajeno nunca pasa a bulk_validate. Devuelve un toast "N aprobadas"."""
+        _owned_project(conn, project_id, user)
+        if ids:
+            # Solo los ids que pertenecen a este proyecto sobreviven (IDOR).
+            wanted = []
+            for raw in ids:
+                try:
+                    wanted.append(int(raw))
+                except (TypeError, ValueError):
+                    continue
+            owned_ids = []
+            if wanted:
+                placeholders = ",".join("?" for _ in wanted)
+                rows = conn.execute(
+                    f"SELECT id FROM images WHERE project_id = ? AND id IN ({placeholders})",
+                    (project_id, *wanted),
+                ).fetchall()
+                owned_ids = [r["id"] for r in rows]
+        else:
+            # Boton ">90%": pendientes propias de alta confianza.
+            rows = conn.execute(
+                "SELECT id FROM images WHERE project_id = ? AND status = 'pending' "
+                "AND confidence >= 0.9 ORDER BY id ASC",
+                (project_id,),
+            ).fetchall()
+            owned_ids = [r["id"] for r in rows]
+
+        n = services.bulk_validate(conn, owned_ids)
+        for iid in owned_ids:
+            _log(conn, user, "validate", image_id=iid, project_id=project_id)
+        return templating.render(
+            request, "partials/toast.html", kind="success", message=f"{n} aprobadas"
+        )
+
     @app.get("/projects/{project_id}/analytics", include_in_schema=False)
     def analytics_page(
         project_id: int, request: Request,
@@ -356,6 +446,13 @@ def create_app(db_path: str | None = None) -> FastAPI:
             time_saved=services.time_saved(conn, project_id),
             # US-16: historial de ciclos AL (cronologico ascendente).
             cycles=services.list_cycles(conn, project_id),
+            # B3: contexto de calidad/A-B/salud. Los 5 servicios son seguros con 0
+            # validadas (P1): nunca lanzan, devuelven el branch vacio/neutro.
+            conflicts=services.conflicts(conn, project_id),
+            confusion=services.confusion_matrix(conn, project_id),
+            quality=services.quality_metrics(conn, project_id),
+            ab=services.ab_summary(conn, project_id),
+            health=services.dataset_health(conn, project_id),
         )
 
     # (7) export del dataset curado (US-23). Ambos protegidos por _owned_project.
@@ -399,7 +496,39 @@ def create_app(db_path: str | None = None) -> FastAPI:
             }
         )
 
-    # (8) re-seed determinista al arrancar, sobre la MISMA conexion (D03). Corre una
+    # (8) administracion (D3, read-only). Gateada por require_admin: no-auth -> 303
+    # /login, curador -> 403, admin -> 200. Lista usuarios + log de actividad filtrable.
+    @app.get("/admin", include_in_schema=False)
+    def admin_page(
+        request: Request,
+        user_filter: str | None = Query(default=None, alias="user"),
+        action: str | None = None,
+        user=Depends(require_admin), conn=Depends(get_conn),
+    ):
+        users = [
+            {"id": r["id"], "email": r["email"], "role": r["role"]}
+            for r in conn.execute(
+                "SELECT id, email, role FROM users ORDER BY id ASC"
+            ).fetchall()
+        ]
+        # Filtro opcional del log por usuario (query param `user`) y accion (`action`).
+        uid = None
+        try:
+            uid = int(user_filter) if user_filter not in (None, "") else None
+        except (TypeError, ValueError):
+            uid = None
+        activity = services.list_activity(conn, user_id=uid, action=action or None)
+        return templating.render(
+            request,
+            "admin.html",
+            user=user,
+            users=users,
+            activity=activity,
+            filter_user=user_filter or "",
+            filter_action=action or "",
+        )
+
+    # (9) re-seed determinista al arrancar, sobre la MISMA conexion (D03). Corre una
     # vez en build; solo siembra si projects esta vacio (no pisa datos existentes).
     seed.seed_if_empty(app.state.conn)
 
