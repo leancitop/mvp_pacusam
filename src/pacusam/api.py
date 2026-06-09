@@ -197,7 +197,8 @@ def create_app(db_path: str | None = None) -> FastAPI:
             "home.html",
             user=user,
             projects=projects,
-            flash=request.query_params.get("flash"),
+            # Nombre distinto del macro `flash` para no colisionar en el template.
+            flash_message=request.query_params.get("flash"),
         )
 
     @app.post("/projects", include_in_schema=False)

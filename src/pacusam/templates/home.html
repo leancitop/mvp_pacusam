@@ -27,8 +27,8 @@
     </button>
   </div>
 
-  {% if flash %}
-  <div class="mt-4">{{ flash('error', flash) }}</div>
+  {% if flash_message %}
+  <div class="mt-4">{{ flash('error', flash_message) }}</div>
   {% endif %}
 
   <form x-show="open" x-cloak method="post" action="/projects"
