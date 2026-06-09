@@ -26,11 +26,20 @@ Conceptuales, no carpetas existentes:
 
 Solo el camino de **US-10** (validar/corregir imágenes pre-clasificadas) sobre **dataset semilla + stub de sugerencias**. Ingesta real (US-07) y pre-clasificador real (US-15) quedan fuera del MVP. Ver decisiones del grupo en la wiki.
 
+## Estado actual del MVP (iteración 1)
+
+Una sola rebanada end-to-end: **US-10** (validar imágenes pre-clasificadas) + US-09 (progreso). Implementado como **Layered**: `api` (FastAPI) → `services` (dominio) → `db` (SQLite, tabla `images`). El dominio no conoce HTTP.
+
+- **Pipes & Filters:** todavía no materializado; el flujo seed→sugerencia→validación es directo. Se materializa con la ingesta real (US-07).
+- **Pub-Sub:** **diferido**. El progreso se recalcula on-demand en `services.progress`, no por eventos. El bus cobra sentido recién en M3. Deuda técnica planificada.
+- **active_learning:** stub determinista (`classifier.py`). US-15 lo reemplaza sin tocar `services`/`api`.
+- **Aún no implementado:** auth (US-01/02/03), proyectos (US-04/06/08), rechazo (US-12). Próximas iteraciones.
+
 ## Atributos de calidad priorizados
 
 Pendiente — derivar de ISO/IEC 25010 y del Plan de Gestión de Calidad ya entregado.
 
-## Decisiones abiertas
+## Decisiones (cerradas en iteración 1)
 
-- Stack tecnológico (lenguaje, framework API, almacenamiento, mensajería).
-- Formato de imágenes soportado en el MVP (DICOM / PNG / NIfTI).
+- **Stack:** Python 3.10+ / FastAPI / SQLite (stdlib) / pytest-bdd. Justificación: cero infra, dominio Python natural para Ciencia de Datos, Gherkin engancha con los criterios de aceptación ya escritos.
+- **Formato de imágenes en el MVP:** irrelevante en esta iteración (no hay decode real; los nombres de archivo son mocks). La validación de formato JPG/PNG/DICOM entra con US-07 (ingesta real).

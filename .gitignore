@@ -18,6 +18,12 @@ __pycache__/
 node_modules/
 dist/
 build/
+*.egg-info/
+
+# Bases SQLite locales
+*.db
+*.sqlite
+*.sqlite3
 
 # Config local / secretos
 .env

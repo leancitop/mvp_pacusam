@@ -1,0 +1,4 @@
+# Dependencias de runtime (lo que Render instala para correr la app).
+# Para desarrollo/tests usar requirements-dev.txt.
+fastapi>=0.110
+uvicorn[standard]>=0.29

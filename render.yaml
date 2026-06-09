@@ -1,0 +1,14 @@
+# Blueprint de Render. Si en vez del flujo manual elegís "New > Blueprint",
+# Render lee este archivo y configura todo solo.
+services:
+  - type: web
+    name: mvp-pacusam
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn pacusam.api:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PYTHONPATH
+        value: src
+      - key: PYTHON_VERSION
+        value: "3.12.7"
