@@ -11,7 +11,7 @@ import json
 import random
 from datetime import datetime, timezone
 
-from . import classifier, events
+from . import classifier, events, pipeline
 
 
 class DomainError(Exception):
@@ -95,9 +95,10 @@ def get_image(conn, image_id: int) -> dict:
 
 
 def seed_images(conn, project_id: int, filenames: list[str]) -> int:
-    """Registra imagenes mockeadas del proyecto en DB, pasando cada una por el STUB
-    del clasificador (sugerencia + confianza). Idempotente por (project_id, filename):
-    re-sembrar no duplica. Devuelve cuantas se insertaron.
+    """Registra imagenes mockeadas del proyecto en DB, pasando cada una por el
+    pipeline de ingesta (Pipes & Filters, A.7): validar formato -> clasificar
+    (sugerencia + confianza via el STUB del clasificador). Idempotente por
+    (project_id, filename): re-sembrar no duplica. Devuelve cuantas se insertaron.
 
     `path` apunta al archivo servido estaticamente en static/datasets/<project_id>/.
     """
@@ -110,7 +111,13 @@ def seed_images(conn, project_id: int, filenames: list[str]) -> int:
         ).fetchone()
         if exists:
             continue
-        label, conf = classifier.suggest(fn, labels)
+        # Pipes & Filters (A.7): la ingesta corre los filtros encadenados. El
+        # filtro_clasificar usa el MISMO classifier.suggest -> confianza identica.
+        ctx = pipeline.run_pipeline(
+            pipeline.INGESTA, {"filename": fn, "labels": labels}
+        )
+        label = ctx["suggested_label"]
+        conf = ctx["confidence"]
         path = f"/static/datasets/{project_id}/{fn}"
         conn.execute(
             "INSERT INTO images (project_id, filename, path, suggested_label, "
