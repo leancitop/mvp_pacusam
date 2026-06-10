@@ -30,14 +30,31 @@ Solo el camino de **US-10** (validar/corregir imágenes pre-clasificadas) sobre 
 
 Una sola rebanada end-to-end: **US-10** (validar imágenes pre-clasificadas) + US-09 (progreso). Implementado como **Layered**: `api` (FastAPI) → `services` (dominio) → `db` (SQLite, tabla `images`). El dominio no conoce HTTP.
 
-- **Pipes & Filters:** todavía no materializado; el flujo seed→sugerencia→validación es directo. Se materializa con la ingesta real (US-07).
-- **Pub-Sub:** **diferido**. El progreso se recalcula on-demand en `services.progress`, no por eventos. El bus cobra sentido recién en M3. Deuda técnica planificada.
+- **Pipes & Filters:** **materializado** en `pipeline.py`: la ingesta corre filtros encadenados puros `[filtro_validar_formato, filtro_clasificar]` sobre cada imagen. Los filtros de decode/anonimizar/almacenar se agregan con la ingesta real (US-07) sin reescribir el flujo.
+- **Pub-Sub:** **materializado** en `events.py`: bus sincrono en memoria. `services` publica los 4 eventos canónicos (`ImagenesSubidas`, `ImagenValidada`, `UmbralAlcanzado`, `CicloFinalizo`); los suscriptores (feedback loop de re-entrenamiento) se registran solo en `create_app`. Event Processing clasificado como SEP (acción uno-a-uno), OEP (score + reordenamiento al instante) y CEP (`UmbralAlcanzado` derivado de N validadas dispara el ciclo).
 - **active_learning:** stub determinista (`classifier.py`). US-15 lo reemplaza sin tocar `services`/`api`.
-- **Aún no implementado:** auth (US-01/02/03), proyectos (US-04/06/08), rechazo (US-12). Próximas iteraciones.
+- **Auth, proyectos, rechazo, roles/admin/log:** implementados (US-01/02/03, US-04/06/08, US-12, US-26/27/28).
 
 ## Atributos de calidad priorizados
 
-Pendiente — derivar de ISO/IEC 25010 y del Plan de Gestión de Calidad ya entregado.
+Derivados de ISO/IEC 25010 y del Plan de Gestión de Calidad. La columna **Estado** distingue lo
+que ya está verificado en el código de lo que se defiende por alcance (M2 / R03).
+
+| Característica (ISO/IEC 25010) | Criterio en el MVP | Evidencia | Estado |
+|---|---|---|---|
+| **Funcionalidad** (adecuación funcional) | El camino US-10 y las funciones de defensa funcionan según los criterios de aceptación | 252 tests verdes (unitarios de dominio/auth + endpoints + integración + BDD en Gherkin) | **real** |
+| **Fiabilidad** | La app no corrompe datos bajo concurrencia y expone su salud | `journal_mode=WAL` + `busy_timeout=3000` en `db.py`; endpoint `GET /health` que devuelve `{status, version}` | **real** |
+| **Usabilidad** | El curador opera por teclado con feedback inmediato | 3 wow-moments (curado tipo "Tinder clínico", uncertainty sampling visible, analytics); se prueba en vivo en la defensa | **real** + prueba manual en defensa |
+| **Eficiencia** (desempeño) | Las páginas responden holgadamente | Test de performance: `/login` y `/health` responden bajo 3s | **real** |
+| **Seguridad** | Credenciales protegidas, sesiones firmadas, sin acceso a recursos ajenos, sin PII | Hash `pbkdf2_sha256` (stdlib); cookies de sesión firmadas (`https_only` configurable); `_owned_project` evita IDOR (404 a recurso ajeno); password server-side (mínimo 6); datasets públicos sin PII (mitiga **R04**) | **real** |
+| **Compatibilidad** (interoperabilidad) | Los datos curados se exportan a formatos estándar | `export.csv` / `export.json` (US-23); la importación real de imágenes JPG/PNG/DICOM (US-07) queda en roadmap | **real** (export) / **roadmap** (import) |
+| **Mantenibilidad** | El código está documentado y los estilos están aislados | Cobertura de docstrings >= 80% verificada por test; capas `api`/`services`/`db` separadas; estilos en `events.py` y `pipeline.py` | **real** |
+| **Portabilidad** | Despliegue reproducible sin tocar el código | `render.yaml` (Blueprint) versionado + re-seed determinista al arrancar | **config lista** / deploy manual del dashboard |
+
+Lo que se **defiende por alcance** y no por implementación: el motor de Active Learning real
+(US-13/15) está mockeado de forma honesta para mitigar **R03** (uncertainty sampling y métricas
+son reales; el entrenamiento es simulado), y la ingesta real (US-07) está fuera de M2. Ver
+`docs/trazabilidad.md` para el mapeo completo decisión -> white paper / actividad / riesgo.
 
 ## Decisiones (cerradas en iteración 1)
 
