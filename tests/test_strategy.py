@@ -47,15 +47,6 @@ def test_default_sigue_siendo_uncertainty(conn):
     assert services.queue_next(conn, 1)["filename"] == "b.jpg"
 
 
-def test_queue_list_random_orden_completo_determinista_y_distinto_de_sequential(conn):
-    r1 = [i["id"] for i in services.queue_list(conn, 1, strategy="random", seed=42)]
-    r2 = [i["id"] for i in services.queue_list(conn, 1, strategy="random", seed=42)]
-    assert r1 == r2  # mismo seed -> mismo orden completo
-    seq = [i["id"] for i in services.queue_list(conn, 1, strategy="sequential")]
-    assert seq == sorted(seq)
-    assert r1 != seq  # el shuffle con seed=42 no coincide con id ASC
-
-
 def test_queue_list_default_sigue_siendo_uncertainty(conn):
     ids = [i["id"] for i in services.queue_list(conn, 1)]
     # b (0.55) primero, c (0.75), a (0.95) ultimo

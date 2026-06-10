@@ -198,18 +198,13 @@ def queue_next(
     }
 
 
-def queue_list(
-    conn,
-    project_id: int,
-    label: str | None = None,
-    strategy: str = "uncertainty",
-    seed: int | None = None,
-) -> list[dict]:
-    """Todas las imagenes del proyecto, ordenadas segun la estrategia (filmstrip).
+def queue_list(conn, project_id: int, label: str | None = None) -> list[dict]:
+    """Todas las imagenes del proyecto, ordenadas por uncertainty (filmstrip).
     Incluye status para que el front pinte validadas/rechazadas/pendientes.
 
     US-17: `label` opcional filtra por suggested_label (None = todas las clases).
-    A1: `strategy`/`seed` opcionales al final; el default sigue siendo uncertainty.
+    A1: el filmstrip SIEMPRE usa uncertainty por diseno (la estrategia de sampling
+    solo afecta a queue_next / la proxima imagen).
     """
     sql = (
         "SELECT id, filename, path, suggested_label, confidence, status, final_label "
@@ -220,7 +215,7 @@ def queue_list(
         sql += "AND suggested_label = ? "
         params.append(label)
     rows = conn.execute(sql, tuple(params)).fetchall()
-    ordered = _order_rows(rows, strategy, seed)
+    ordered = _order_rows(rows, "uncertainty", None)
     out = []
     for r in ordered:
         conf = r["confidence"] if r["confidence"] is not None else 0.5
