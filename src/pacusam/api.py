@@ -27,7 +27,7 @@ from fastapi.responses import JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import auth, db, events, seed, services, templating
+from . import __version__, auth, db, events, seed, services, templating
 
 _STATIC_DIR = Path(__file__).parent / "static"
 
@@ -222,8 +222,14 @@ def create_app(db_path: str | None = None) -> FastAPI:
             pass
 
     # (3) rutas auth (NO pasan por _guard; renderizan el form con error y status 400/401).
+    @app.get("/health")
+    def health():
+        """Healthcheck publico (sin sesion): JSON {status, version} para liveness/probes."""
+        return JSONResponse({"status": "ok", "version": __version__})
+
     @app.get("/login", include_in_schema=False)
     def login_page(request: Request):
+        """Renderiza el formulario de login."""
         return templating.render(request, "login.html")
 
     @app.get("/register", include_in_schema=False)
