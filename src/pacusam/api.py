@@ -41,6 +41,7 @@ _STATUS = {
     "name_required": 422,
     "name_too_long": 422,
     "email_exists": 409,
+    "password_too_short": 422,
 }
 
 # Mensajes legibles para el flash de creacion de proyecto (D20 los lee del detalle).
@@ -239,12 +240,16 @@ def create_app(db_path: str | None = None) -> FastAPI:
         try:
             user = auth.create_user(conn, email, password)
         except services.DomainError as e:
+            messages = {
+                "email_exists": "El email ya esta registrado.",
+                "password_too_short": "La contrasena debe tener al menos 6 caracteres.",
+            }
             return templating.render(
                 request,
                 "register.html",
                 status_code=400,
                 email=email,
-                error="El email ya esta registrado." if e.code == "email_exists" else e.code,
+                error=messages.get(e.code, e.code),
             )
         request.session["user_id"] = user["id"]
         return RedirectResponse("/", status_code=303)

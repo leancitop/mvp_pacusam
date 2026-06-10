@@ -66,11 +66,19 @@ def _user_dict(row) -> dict:
     }
 
 
+_MIN_PASSWORD_LEN = 6
+
+
 def create_user(conn, email: str, password: str, role: str = "curador") -> dict:
     """Crea un usuario. Lanza DomainError('email_exists') si el email ya existe.
 
+    Valida la politica de password server-side (ISO 25010 Seguridad): lanza
+    DomainError('password_too_short') si tiene menos de 6 caracteres.
+
     D1: `role` opcional (default 'curador'); 'admin' para el admin demo.
     """
+    if len(password) < _MIN_PASSWORD_LEN:
+        raise DomainError("password_too_short", "La contrasena debe tener al menos 6 caracteres")
     try:
         cur = conn.execute(
             "INSERT INTO users (email, password_hash, role, created_at) VALUES (?,?,?,?)",
