@@ -11,7 +11,7 @@ import json
 import random
 from datetime import datetime, timezone
 
-from . import classifier, events, pipeline
+from . import events, pipeline
 
 
 class DomainError(Exception):
@@ -136,9 +136,6 @@ def seed_images(conn, project_id: int, filenames: list[str]) -> int:
 
 
 # ============================================================ cola (Active Learning)
-
-# A1: estrategias de sampling soportadas. uncertainty es el default historico.
-_STRATEGIES = ("uncertainty", "sequential", "random")
 
 
 def _order_rows(rows: list, strategy: str, seed: int | None) -> list:
