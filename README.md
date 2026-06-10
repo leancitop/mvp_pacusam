@@ -66,20 +66,31 @@ También podés **registrar** una cuenta nueva desde `/register` (arranca sin pr
 PYTHONPATH=src ./.venv/bin/python -m pytest -q
 ```
 
-124 tests: unitarios de dominio/auth + endpoints + integración + BDD en español (criterios de aceptación project-scoped).
+252 tests: unitarios de dominio/auth + endpoints + integración + BDD en español (criterios de aceptación project-scoped) + estilos arquitectónicos (event bus, eventos de dominio, feedback loop, pipeline) + calidad ISO 25010 (password server-side, /health + performance, cobertura de docstrings >= 80%).
 
 ## Arquitectura
 
 Capas: **`api`** (FastAPI, rutas + sesión) → **`services`** (dominio, no conoce HTTP) → **`db`** (SQLite). UI server-side con Jinja2 + HTMX (sin SPA).
 
+**Estilos arquitectónicos materializados** (del white paper, A.7):
+
+- **Layered:** `api` → `services` → `db`; el dominio no conoce HTTP.
+- **Pub-Sub** (`events.py`): bus síncrono in-process. `services` publica 4 eventos canónicos (`ImagenesSubidas`, `ImagenValidada`, `UmbralAlcanzado`, `CicloFinalizo`); los suscriptores (feedback loop de re-entrenamiento) se registran solo en `create_app`. Entrega best-effort.
+- **Event Processing:** **SEP** (cada validación es una acción uno-a-uno), **OEP** (el score se ve al instante y la cola se reordena por incertidumbre tras cada acción) y **CEP** (`UmbralAlcanzado` es un evento derivado de N validadas que dispara el re-entrenamiento automático).
+- **Pipes & Filters** (`pipeline.py`): la ingesta corre filtros encadenados puros `[filtro_validar_formato, filtro_clasificar]`; se agregan filtros (decode/anonimizar/almacenar) con la ingesta real sin reescribir el flujo.
+
+Trazabilidad completa de cada decisión (white paper / actividad del curso / riesgo / estado) en [`docs/trazabilidad.md`](docs/trazabilidad.md); atributos de calidad ISO/IEC 25010 en [`docs/arquitectura.md`](docs/arquitectura.md).
+
 ```
 src/pacusam/
   db.py          SQLite (users / projects / images), WAL + busy_timeout
   classifier.py  stub del motor de AL (confianza mock, determinista)
-  auth.py        hashing pbkdf2 + create_user / authenticate
-  services.py    dominio: proyectos, cola por incertidumbre, validar/rechazar, métricas
+  auth.py        hashing pbkdf2 + create_user / authenticate (password server-side)
+  services.py    dominio: proyectos, cola por incertidumbre, validar/rechazar, métricas; publica eventos
+  events.py      bus Pub-Sub in-process (4 eventos canónicos, SEP/OEP/CEP)
+  pipeline.py    ingesta como Pipes & Filters (filtros encadenados puros)
   seed.py        siembra determinista (usuario demo + 2 proyectos + imágenes reales)
-  api.py         rutas FastAPI, sesión, autorización por dueño
+  api.py         rutas FastAPI, sesión, autorización por dueño, /health, suscriptores del feedback loop
   templating.py  helper de render Jinja2
   templates/     base + login/register/home/project/curate/analytics + partials
   static/        vendor/ (HTMX/Alpine/Tailwind/Lucide local) · datasets/{1,2}/ (imágenes reales)
@@ -112,7 +123,6 @@ Imágenes reales públicas, versionadas en el repo (demo 100% offline):
 
 - **Single-user en concurrencia alta**: una conexión SQLite compartida (WAL + `busy_timeout` como red de seguridad). Suficiente para el demo; no para producción multiusuario.
 - **Motor de AL mockeado**: las sugerencias y el "re-entrenamiento" son simulados (el *uncertainty sampling* sí es real).
-- **Validación de password solo client-side** (`minlength`): falta regla server-side.
 
 ---
 
