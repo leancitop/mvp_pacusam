@@ -1,0 +1,69 @@
+{# Macros UI compartidos (Track B / Capa 2) — FUENTE ÚNICA (Decisión #8/D16).
+   Importar con:
+     {% from "partials/ui.html" import progress_bar, confidence_bar, flash %}
+   No duplicar estos estilos inline en C/D/E/F. #}
+
+{% macro progress_bar(progress) -%}
+  {% set p = '%.1f'|format(progress|float) %}
+  <div class="w-full" role="progressbar" aria-valuenow="{{ p }}" aria-valuemin="0" aria-valuemax="100">
+    <div class="flex items-center justify-between mb-1">
+      <span class="text-xs font-medium text-muted">Progreso</span>
+      <span class="text-xs font-mono text-ink">{{ p }}%</span>
+    </div>
+    <div class="h-2 w-full rounded-full bg-surface2 overflow-hidden">
+      <div class="h-full rounded-full bg-accent transition-[width] duration-150 ease-out"
+           style="width: {{ p }}%"></div>
+    </div>
+  </div>
+{%- endmacro %}
+
+{% macro confidence_bar(confidence) -%}
+  {% set c = confidence|float %}
+  {% set pct = (c * 100)|round|int %}
+  {# Umbral D11/D16: >=0.90 verde/approved · 0.60–0.90 azul/accent · <0.60 ámbar/flag #}
+  {% if c >= 0.90 %}{% set tone = 'bg-approved' %}{% set txt = 'text-approved' %}
+  {% elif c >= 0.60 %}{% set tone = 'bg-accent' %}{% set txt = 'text-accent' %}
+  {% else %}{% set tone = 'bg-flag' %}{% set txt = 'text-flag' %}{% endif %}
+  <div class="flex items-center gap-2">
+    <div class="h-1.5 flex-1 rounded-full bg-surface2 overflow-hidden">
+      <div class="h-full rounded-full {{ tone }} transition-[width] duration-150 ease-out"
+           style="width: {{ pct }}%"></div>
+    </div>
+    <span class="text-xs font-mono {{ txt }} tabular-nums">{{ pct }}%</span>
+  </div>
+{%- endmacro %}
+
+{% macro filter_chips(project_id, label_counts, active_label=None) -%}
+  {# US-17: chips de filtro por etiqueta para el filmstrip. label_counts = list de
+     tuplas (label, count). El chip "Todas" limpia el filtro. Cada chip re-pide la
+     cola filtrada y re-renderiza la card (#image-card) con el filmstrip OOB. #}
+  {% if label_counts %}
+  <div class="flex flex-wrap items-center gap-1.5">
+    <button hx-get="/projects/{{ project_id }}/queue"
+            hx-target="#image-card" hx-swap="outerHTML"
+            class="px-2.5 py-1 text-[11px] font-medium rounded-full border transition-colors duration-150
+                   {% if not active_label %}border-accent bg-accent text-white{% else %}border-border bg-surface text-muted hover:text-ink{% endif %}">Todas</button>
+    {% for label, count in label_counts %}
+    <button hx-get="/projects/{{ project_id }}/queue?label={{ label | urlencode }}"
+            hx-target="#image-card" hx-swap="outerHTML"
+            class="px-2.5 py-1 text-[11px] font-medium rounded-full border transition-colors duration-150
+                   {% if active_label == label %}border-accent bg-accent text-white{% else %}border-border bg-surface text-muted hover:text-ink{% endif %}">{{ label }} <span class="font-mono opacity-70">{{ count }}</span></button>
+    {% endfor %}
+  </div>
+  {% endif %}
+{%- endmacro %}
+
+{% macro flash(kind='info', message='') -%}
+  {% if message %}
+    {% if kind == 'error' %}{% set box = 'bg-rejected-tint text-rejected border-rejected/30' %}
+    {% elif kind == 'success' %}{% set box = 'bg-approved-tint text-approved border-approved/30' %}
+    {% elif kind == 'flag' %}{% set box = 'bg-flag-tint text-flag border-flag/30' %}
+    {% else %}{% set box = 'bg-accent-tint text-accent border-accent/30' %}{% endif %}
+    <div class="flex items-start gap-2 rounded-lg border px-3 py-2 text-sm {{ box }}"
+         role="alert" x-data="{ show: true }" x-show="show" x-cloak>
+      <span class="flex-1">{{ message }}</span>
+      <button type="button" class="opacity-60 hover:opacity-100 transition"
+              @click="show = false" aria-label="Cerrar">&times;</button>
+    </div>
+  {% endif %}
+{%- endmacro %}

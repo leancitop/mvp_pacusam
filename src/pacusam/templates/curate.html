@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+{% from "partials/ui.html" import filter_chips %}
+{% block title %}Curado · {{ project.name }}{% endblock %}
+{% block content %}
+{# Pantalla de curado de altura fija (sin scroll en desktop): topbar + area
+   principal (image_card = 2 columnas info/imagen) + filmstrip abajo. En pantallas
+   chicas se apila y permite scroll. El swap #image-card actualiza info+imagen
+   juntas; el filmstrip se actualiza OOB. #}
+<div class="flex flex-col lg:h-screen lg:overflow-hidden bg-app"
+     x-data="{ showHelp: false }"
+     @keydown.window.shift.question.prevent="showHelp = !showHelp"
+     @keydown.window.escape="showHelp = false">
+
+  {# Topbar compacto #}
+  <header class="shrink-0 border-b border-border bg-surface px-4 py-2 flex items-center justify-between gap-4">
+    <div class="min-w-0">
+      <nav class="text-xs text-muted leading-tight">
+        <a href="/" class="hover:text-ink transition-colors">Proyectos</a>
+        <span class="text-faint">/</span>
+        <a href="/projects/{{ project.id }}" class="hover:text-ink transition-colors">{{ project.name }}</a>
+      </nav>
+      <h1 class="font-display text-lg text-ink leading-tight truncate">Curado por incertidumbre</h1>
+    </div>
+    <div class="flex items-center gap-2 shrink-0">
+      {# A4: selector de estrategia de sampling. Re-dispara GET /queue?strategy=...
+         que reordena la proxima imagen (el filmstrip sigue en uncertainty). La activa
+         queda resaltada. hx-target=#image-card, swap outerHTML (auto-avance del card). #}
+      <div x-data="{ strategy: 'uncertainty' }" class="inline-flex items-center gap-1 rounded-md border border-border bg-surface p-0.5">
+        {% for opt in [('uncertainty', 'Incertidumbre'), ('random', 'Aleatoria'), ('sequential', 'Secuencial')] %}
+        <button type="button"
+                @click="strategy = '{{ opt[0] }}'"
+                hx-get="/projects/{{ project.id }}/queue?strategy={{ opt[0] }}"
+                hx-target="#image-card" hx-swap="outerHTML"
+                :class="strategy === '{{ opt[0] }}' ? 'bg-accent text-white' : 'text-muted hover:text-ink'"
+                class="px-2.5 py-1 text-xs font-medium rounded transition-colors duration-150">{{ opt[1] }}</button>
+        {% endfor %}
+      </div>
+      <a href="/projects/{{ project.id }}/analytics"
+         class="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-md bg-surface2 text-ink hover:bg-border transition-colors duration-150">
+        <i data-lucide="bar-chart-3" class="h-4 w-4"></i> Analítica
+      </a>
+      <button @click="showHelp = true"
+              class="px-3 py-1.5 text-sm rounded-md bg-surface border border-border text-muted hover:text-ink transition-colors duration-150">Atajos (?)</button>
+      <form method="post" action="/logout">
+        <button class="px-2 py-1.5 text-sm text-muted hover:text-ink transition-colors duration-150">Salir</button>
+      </form>
+    </div>
+  </header>
+
+  {# Area principal: carga la cola al abrir; image_card es el layout 2-col que llena el alto #}
+  <main class="flex-1 min-h-0 flex"
+        hx-get="/projects/{{ project.id }}/queue" hx-trigger="load" hx-swap="innerHTML">
+    <div id="image-card" class="flex-1 flex items-center justify-center">
+      <div class="flex items-center gap-3 text-faint text-sm">
+        <span class="pacusam-spinner" aria-hidden="true"></span>
+        <span>Cargando la cola…</span>
+      </div>
+    </div>
+  </main>
+
+  {# Filmstrip horizontal abajo (se actualiza OOB en cada accion) #}
+  <footer class="shrink-0 border-t border-border bg-surface px-4 pt-1.5 pb-2">
+    <div class="flex flex-wrap items-baseline justify-between gap-2 mb-1">
+      <div class="flex items-baseline gap-2">
+        <span class="text-[11px] uppercase tracking-wide text-faint">Cola por incertidumbre</span>
+        <span class="text-[11px] text-faint">· el recuadro azul es la próxima a etiquetar</span>
+      </div>
+      {# US-17: chips de filtro por clase. Se re-renderizan OOB desde el card. #}
+      <div id="filter-chips">
+        {{ filter_chips(project_id, label_counts, active_label) }}
+      </div>
+    </div>
+    {% include "partials/filmstrip.html" %}
+  </footer>
+
+  {# Overlay de atajos #}
+  <div x-show="showHelp" x-cloak @click="showHelp = false"
+       class="fixed inset-0 bg-black/30 flex items-center justify-center z-50">
+    <div @click.stop class="bg-surface rounded-lg border border-border p-6 w-80 shadow-sm">
+      <h3 class="font-display text-lg text-ink mb-3">Atajos de teclado</h3>
+      <ul class="text-sm text-muted space-y-2">
+        <li class="flex justify-between"><span>Confirmar sugerencia</span><kbd class="font-mono bg-surface2 px-2 rounded">A</kbd></li>
+        <li class="flex justify-between"><span>Corregir etiqueta</span><kbd class="font-mono bg-surface2 px-2 rounded">C</kbd></li>
+        <li class="flex justify-between"><span>Rechazar</span><kbd class="font-mono bg-surface2 px-2 rounded">R</kbd></li>
+        <li class="flex justify-between"><span>Cerrar / cancelar</span><kbd class="font-mono bg-surface2 px-2 rounded">Esc</kbd></li>
+      </ul>
+      <button @click="showHelp = false"
+              class="mt-4 w-full px-3 py-2 text-sm rounded-md bg-accent text-white hover:bg-accent-hover transition-colors duration-150">Entendido</button>
+    </div>
+  </div>
+</div>
+{% endblock %}

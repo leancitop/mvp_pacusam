@@ -1,4 +1,8 @@
 # Dependencias de runtime (lo que Render instala para correr la app).
 # Para desarrollo/tests usar requirements-dev.txt.
+# AUTH sin dependencias C: el hashing usa hashlib.pbkdf2_hmac (stdlib), NO passlib/bcrypt.
 fastapi>=0.110
 uvicorn[standard]>=0.29
+jinja2>=3.1
+python-multipart>=0.0.9
+itsdangerous>=2.1

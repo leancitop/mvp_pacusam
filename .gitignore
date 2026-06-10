@@ -1,4 +1,4 @@
-# Datos / artefactos (no versionar imágenes médicas ni datasets)
+# Datos / artefactos (no versionar imágenes médicas crudas ni datasets pesados)
 data/
 *.dcm
 *.nii
@@ -8,6 +8,11 @@ models/
 *.pt
 *.pth
 *.h5
+
+# EXCEPCIÓN: los datasets del demo (jpeg/png chicos) SÍ se versionan,
+# así el deploy/demo tiene imágenes reales sin descargar nada en runtime.
+!src/pacusam/static/datasets/
+!src/pacusam/static/datasets/**
 
 # Entornos / dependencias
 .venv/
@@ -39,3 +44,4 @@ Thumbs.db
 # Logs
 *.log
 logs/
+.gstack/

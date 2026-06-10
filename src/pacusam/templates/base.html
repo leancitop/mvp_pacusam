@@ -1,0 +1,303 @@
+<!doctype html>
+<html lang="es" class="h-full">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}{{ title|default("PACUSAM") }}{% endblock %}</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Lora:wght@500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+  {# Design system: tokens Tailwind. La config se setea ANTES de cargar el
+     Play CDN (Tailwind la lee del global al inicializar el JIT). D15: servido
+     local desde /static/vendor (versiones pineadas), CDN solo como plan B. #}
+  <script>
+    window.tailwind = window.tailwind || {};
+    window.tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            app:      "#FCFBF9",
+            surface:  "#FFFFFF",
+            surface2: "#F4F2EE",
+            border:   "#E7E4DE",
+            ink:      "#1A1A18",
+            muted:    "#6B6B66",
+            faint:    "#9C9A94",
+            accent:   { DEFAULT: "#2563EB", hover: "#1D4ED8", tint: "#EFF4FF" },
+            approved: { DEFAULT: "#16A34A", tint: "#ECFDF3" },
+            rejected: { DEFAULT: "#DC2626", tint: "#FEF2F2" },
+            flag:     { DEFAULT: "#D97706", tint: "#FFFBEB" },
+          },
+          fontFamily: {
+            sans:    ['Inter', 'ui-sans-serif', 'system-ui', 'sans-serif'],
+            display: ['Lora', 'ui-serif', 'Georgia', 'serif'],
+            mono:    ['"JetBrains Mono"', 'ui-monospace', 'monospace'],
+          },
+          transitionDuration: { DEFAULT: '140ms' },
+        },
+      },
+    };
+  </script>
+  {# Tailwind Play CDN 3.4.16, pineado y servido local (D15). #}
+  <script src="/static/vendor/tailwind.min.js"></script>
+  {# Tokens de color/fuente como CSS real: el JIT del Play CDN servido local no
+     genera de forma confiable las clases custom (bg-accent, text-approved...).
+     Esta hoja las garantiza. Va DESPUES de Tailwind para ganar precedencia. #}
+  <link rel="stylesheet" href="/static/css/tokens.css">
+
+  <style>
+    body { font-feature-settings: "cv11", "ss01"; }
+    [x-cloak] { display: none !important; }
+  </style>
+
+  {# HTMX 1.9.12 + Alpine 3.14.1, pineados y servidos local (D15). #}
+  <script defer src="/static/vendor/htmx.min.js"></script>
+  <script defer src="/static/vendor/alpine.min.js"></script>
+  {# Iconos Lucide 0.469.0 (UMD), pineado y servido local. #}
+  <script defer src="/static/vendor/lucide.min.js"></script>
+  {# canvas-confetti 1.9.3, pineado y servido local. Micro-celebracion (wow). #}
+  <script defer src="/static/vendor/confetti.min.js"></script>
+
+  <style>
+    /* Auto-avance del card: fade + leve slide al hacer swap (htmx outerHTML).
+       Suave, no brusco. Las fases htmx-swapping/htmx-settling las setea HTMX
+       sobre el elemento que se reemplaza. */
+    #image-card {
+      transition: opacity 140ms ease, transform 140ms ease;
+    }
+    #image-card.htmx-swapping {
+      opacity: 0;
+      transform: translateY(8px);
+    }
+    #image-card.htmx-settling {
+      opacity: 0;
+      transform: translateY(-6px);
+    }
+
+    /* Spinner de carga (reusa el token de color del acento). */
+    .pacusam-spinner {
+      width: 1.25rem;
+      height: 1.25rem;
+      border: 2px solid #E7E4DE;       /* border token */
+      border-top-color: #2563EB;        /* accent token */
+      border-radius: 9999px;
+      animation: pacusam-spin 720ms linear infinite;
+    }
+    @keyframes pacusam-spin { to { transform: rotate(360deg); } }
+
+    /* Pop suave de la tarjeta de celebracion "Dataset curado". */
+    .pacusam-pop {
+      animation: pacusam-pop 320ms cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    @keyframes pacusam-pop {
+      from { opacity: 0; transform: scale(0.94); }
+      to   { opacity: 1; transform: scale(1); }
+    }
+
+    /* Slide-in suave de los toasts. */
+    #toast-host > div {
+      animation: pacusam-toast-in 220ms cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    @keyframes pacusam-toast-in {
+      from { opacity: 0; transform: translateX(16px); }
+      to   { opacity: 1; transform: translateX(0); }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      #image-card, #image-card.htmx-swapping, #image-card.htmx-settling {
+        transition: none;
+        opacity: 1;
+        transform: none;
+      }
+      .pacusam-spinner { animation: none; }
+      #toast-host > div { animation: none; }
+      .pacusam-pop { animation: none; }
+    }
+  </style>
+
+  {% block head_extra %}{% endblock %}
+</head>
+<body class="h-full bg-app text-ink font-sans antialiased">
+  {# Contenedor global de toasts (errores HTMX D20 + retrain D08 lo usan). #}
+  <div id="toast-host"
+       class="fixed top-4 right-4 z-50 flex flex-col gap-2 w-80 max-w-[calc(100vw-2rem)]"></div>
+
+  <div class="flex min-h-full">
+    {% block sidebar %}{% endblock %}
+    <div class="flex-1 flex flex-col min-w-0">
+      {% block flash %}{% endblock %}
+      {% block content %}{% endblock %}
+    </div>
+  </div>
+
+  {# D20: manejo de errores HTMX. Cualquier respuesta 4xx/5xx muestra un toast
+     con el detalle del error (sin recargar). Reusa el estilo del macro flash. #}
+  <script>
+    (function () {
+      function escapeHtml(s) {
+        return String(s).replace(/[&<>"']/g, function (c) {
+          return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+        });
+      }
+      function showToast(message, kind) {
+        var host = document.getElementById('toast-host');
+        if (!host) return;
+        var box = {
+          error:   'bg-rejected-tint text-rejected border-rejected/30',
+          success: 'bg-approved-tint text-approved border-approved/30',
+          flag:    'bg-flag-tint text-flag border-flag/30',
+          info:    'bg-accent-tint text-accent border-accent/30',
+        }[kind || 'info'];
+        var el = document.createElement('div');
+        el.className = 'flex items-start gap-2 rounded-lg border px-3 py-2 text-sm shadow-sm ' + box;
+        el.setAttribute('role', 'alert');
+        el.innerHTML =
+          '<span class="flex-1">' + escapeHtml(message) + '</span>' +
+          '<button type="button" class="opacity-60 hover:opacity-100 transition" aria-label="Cerrar">&times;</button>';
+        el.querySelector('button').addEventListener('click', function () { el.remove(); });
+        host.appendChild(el);
+        setTimeout(function () { el.remove(); }, 6000);
+      }
+      // Expuesto para que otros scripts/inline puedan disparar toasts.
+      window.pacusamToast = showToast;
+
+      document.body.addEventListener('htmx:responseError', function (evt) {
+        var xhr = evt.detail && evt.detail.xhr;
+        var status = xhr ? xhr.status : '';
+        var detail = '';
+        if (xhr && xhr.responseText) {
+          try {
+            var j = JSON.parse(xhr.responseText);
+            detail = j.detail || j.message || '';
+          } catch (e) {
+            // El cuerpo no es JSON (ej. un fragmento HTML); usamos un texto genérico.
+          }
+        }
+        var msg = detail || ('Ocurrió un error (' + status + '). Probá de nuevo.');
+        showToast(msg, status === 404 ? 'flag' : 'error');
+      });
+
+      document.body.addEventListener('htmx:sendError', function () {
+        showToast('No se pudo conectar con el servidor.', 'error');
+      });
+
+      // Re-renderiza los iconos Lucide tras cada swap de HTMX.
+      function renderIcons() {
+        if (window.lucide && typeof window.lucide.createIcons === 'function') {
+          window.lucide.createIcons();
+        }
+      }
+      window.addEventListener('DOMContentLoaded', renderIcons);
+      document.body.addEventListener('htmx:afterSwap', renderIcons);
+    })();
+  </script>
+
+  {# Animaciones wow: helper Alpine de count-up + disparo de confetti en la
+     micro-celebracion de "Dataset curado". Respetan prefers-reduced-motion. #}
+  <script>
+    (function () {
+      var reduce = window.matchMedia &&
+        window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+      // Helper Alpine: anima un numero de 0 al valor objetivo (~600ms).
+      // Uso: <span x-data="countUp(73.4, 1)" x-text="display"></span>
+      window.countUp = function (target, decimals) {
+        decimals = decimals || 0;
+        return {
+          display: reduce ? Number(target).toFixed(decimals) : (0).toFixed(decimals),
+          init: function () {
+            if (reduce) return;
+            var self = this;
+            var start = null;
+            var dur = 600;
+            function step(ts) {
+              if (start === null) start = ts;
+              var t = Math.min((ts - start) / dur, 1);
+              // ease-out cubic
+              var eased = 1 - Math.pow(1 - t, 3);
+              self.display = (target * eased).toFixed(decimals);
+              if (t < 1) requestAnimationFrame(step);
+              else self.display = Number(target).toFixed(decimals);
+            }
+            requestAnimationFrame(step);
+          },
+        };
+      };
+
+      // Confetti sutil cuando aparece la micro-celebracion (else branch del card).
+      function celebrate(scope) {
+        if (reduce || typeof window.confetti !== 'function') return;
+        var root = scope || document;
+        if (!root.querySelector || !root.querySelector('.pacusam-celebrate')) return;
+        window.confetti({
+          particleCount: 70,
+          spread: 64,
+          startVelocity: 32,
+          gravity: 0.9,
+          scalar: 0.85,
+          origin: { y: 0.7 },
+          colors: ['#2563EB', '#16A34A', '#D97706'],
+        });
+      }
+      // Tras cada swap de HTMX, si el contenido nuevo trae la celebracion, dispara.
+      document.body.addEventListener('htmx:afterSwap', function (evt) {
+        celebrate(evt.detail && evt.detail.target ? evt.detail.target : document);
+        // El filmstrip OOB tambien puede reemplazar el card; revisar todo el doc.
+        celebrate(document);
+      });
+      // Por si la pagina carga ya en estado de cola vacia.
+      window.addEventListener('DOMContentLoaded', function () { celebrate(document); });
+    })();
+  </script>
+
+  {# Visor estilo OHIF (Bundle C): helper Alpine global y reusable para la imagen
+     del card de curado. Maneja zoom (rueda + botones), pan (drag), invert y reset.
+     Las hotkeys del visor van SCOPED al contenedor (tabindex + @keydown, NO .window)
+     para no colisionar con A/C/R/Escape del curado (que usan @keydown.window). #}
+  <script>
+    window.viewer = function () {
+      return {
+        scale: 1,
+        tx: 0,
+        ty: 0,
+        invert: false,
+        dragging: false,
+        _sx: 0,
+        _sy: 0,
+        get transform() {
+          return 'translate(' + this.tx + 'px,' + this.ty + 'px) scale(' + this.scale + ')';
+        },
+        get filter() {
+          return this.invert ? 'invert(1)' : 'none';
+        },
+        zoomIn: function () { this.scale = Math.min(this.scale + 0.25, 6); },
+        zoomOut: function () {
+          this.scale = Math.max(this.scale - 0.25, 0.25);
+          if (this.scale <= 1) { this.tx = 0; this.ty = 0; }
+        },
+        onWheel: function (e) {
+          if (e.deltaY < 0) this.zoomIn(); else this.zoomOut();
+        },
+        toggleInvert: function () { this.invert = !this.invert; },
+        reset: function () { this.scale = 1; this.tx = 0; this.ty = 0; this.invert = false; },
+        startPan: function (e) {
+          if (this.scale <= 1) return;
+          this.dragging = true;
+          this._sx = e.clientX - this.tx;
+          this._sy = e.clientY - this.ty;
+        },
+        onPan: function (e) {
+          if (!this.dragging) return;
+          this.tx = e.clientX - this._sx;
+          this.ty = e.clientY - this._sy;
+        },
+        endPan: function () { this.dragging = false; },
+      };
+    };
+  </script>
+
+  {% block body_extra %}{% endblock %}
+</body>
+</html>

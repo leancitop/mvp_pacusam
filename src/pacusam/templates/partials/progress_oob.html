@@ -1,0 +1,13 @@
+{# Progreso + frase-gancho del wow #2 (D11). Se actualiza fuera de banda (hx-swap-oob)
+   en cada accion de curado. Espera `progress` (dict de services.progress). #}
+{% from "partials/ui.html" import progress_bar %}
+{% set _decided = progress.validated + progress.rejected %}
+<div id="curate-progress" hx-swap-oob="true">
+  {{ progress_bar(progress.percent) }}
+  {% if progress.total > 0 %}
+  <p class="mt-2 text-sm text-ink">
+    Etiquetaste <strong>{{ _decided }}</strong> de <strong>{{ progress.total }}</strong>.
+    Son las que más le enseñan al modelo.
+  </p>
+  {% endif %}
+</div>

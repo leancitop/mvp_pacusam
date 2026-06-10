@@ -1,0 +1,26 @@
+{# Card de proyecto para la home. Espera `p` (dict con id/name/description/labels)
+   y `p.progress` (dict de services.progress). Usa el macro progress_bar (fuente
+   unica, integracion #8). #}
+{% from "partials/ui.html" import progress_bar %}
+<a href="/projects/{{ p.id }}"
+   class="block rounded-lg border border-border bg-surface p-5 hover:border-accent transition-colors duration-150">
+  <div class="flex items-start justify-between gap-3">
+    <h3 class="font-display text-base font-semibold text-ink">{{ p.name }}</h3>
+    {% if p.domain %}
+    <span class="rounded-full bg-surface2 px-2 py-0.5 text-[10px] font-mono text-faint shrink-0">{{ p.domain }}</span>
+    {% endif %}
+  </div>
+  {% if p.description %}
+  <p class="mt-1 text-sm text-muted line-clamp-2">{{ p.description }}</p>
+  {% endif %}
+
+  <div class="mt-4">
+    {{ progress_bar(p.progress.percent) }}
+  </div>
+
+  <div class="mt-3 flex items-center gap-3 text-xs text-faint font-mono">
+    <span class="text-approved">{{ p.progress.validated }} validadas</span>
+    <span class="text-rejected">{{ p.progress.rejected }} rechazadas</span>
+    <span>{{ p.progress.pending }} pendientes</span>
+  </div>
+</a>

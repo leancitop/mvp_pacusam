@@ -1,0 +1,28 @@
+{# Filmstrip: MINIATURAS REALES ordenadas por incertidumbre (D09, mayor leverage).
+   Espera `filmstrip` (list de queue_list) y `project_id`. Borde por status, ring en
+   el activo (primera pending), 'u {{uncertainty}}', boton deshacer en rechazadas.
+   Lleva id + hx-swap-oob: se reemplaza fuera de banda en cada accion de curado. #}
+{% set _active = (filmstrip | selectattr('status', 'equalto', 'pending') | list | first) %}
+<div id="filmstrip" hx-swap-oob="true" class="flex gap-2 overflow-x-auto py-2">
+  {% for item in filmstrip %}
+    <div class="flex-shrink-0 w-20 rounded-md border p-1 text-center transition-colors duration-150
+                {% if item.status == 'validated' %}border-approved bg-approved-tint
+                {% elif item.status == 'rejected' %}border-rejected bg-rejected-tint
+                {% else %}border-border bg-surface{% endif %}
+                {% if _active and item.id == _active.id %}ring-2 ring-accent{% endif %}">
+      <div class="h-12 w-full overflow-hidden rounded bg-surface2">
+        <img src="{{ item.path }}" alt="{{ item.filename }}" loading="lazy"
+             onerror="this.onerror=null;this.src='/static/placeholder.png'"
+             class="h-12 w-full object-cover rounded">
+      </div>
+      <span class="block text-[9px] font-mono mt-1 text-faint">u {{ item.uncertainty }}</span>
+      {% if item.status == 'rejected' %}
+      <button hx-post="/images/{{ item.id }}/unreject"
+              hx-target="#image-card" hx-swap="outerHTML"
+              class="mt-0.5 block w-full text-[9px] font-medium text-accent hover:text-accent-hover transition-colors duration-150">Deshacer</button>
+      {% endif %}
+    </div>
+  {% else %}
+    <p class="text-xs text-faint py-3">Sin imágenes en este proyecto todavia.</p>
+  {% endfor %}
+</div>
