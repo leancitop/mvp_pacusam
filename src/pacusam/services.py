@@ -11,7 +11,7 @@ import json
 import random
 from datetime import datetime, timezone
 
-from . import classifier
+from . import classifier, events
 
 
 class DomainError(Exception):
@@ -119,6 +119,12 @@ def seed_images(conn, project_id: int, filenames: list[str]) -> int:
         )
         inserted += 1
     conn.commit()
+    # Pub-Sub (A.7): notifica la ingesta de un lote. Aditivo: no cambia el retorno.
+    if inserted > 0:
+        events.bus.publish(
+            events.IMAGENES_SUBIDAS,
+            {"conn": conn, "project_id": project_id, "count": inserted},
+        )
     return inserted
 
 
@@ -314,6 +320,26 @@ def validate_image(conn, image_id: int, label: str) -> dict:
         (label, ts, image_id),
     )
     conn.commit()
+    project_id = row["project_id"]
+    # SEP (A.7): cada validacion emite un evento de dominio uno-a-uno.
+    events.bus.publish(
+        events.IMAGEN_VALIDADA,
+        {"conn": conn, "image_id": image_id, "project_id": project_id},
+    )
+    # CEP (A.7): UmbralAlcanzado es un evento DERIVADO de N ImagenValidada; se
+    # publica SOLO en el cruce exacto (validated == threshold) para que dispare
+    # una unica vez. Aditivo: no cambia el retorno de la funcion.
+    ts_status = threshold_status(conn, project_id)
+    if ts_status["validated"] == ts_status["threshold"]:
+        events.bus.publish(
+            events.UMBRAL_ALCANZADO,
+            {
+                "conn": conn,
+                "project_id": project_id,
+                "validated": ts_status["validated"],
+                "threshold": ts_status["threshold"],
+            },
+        )
     return {"id": image_id, "status": "validated", "final_label": label, "validated_at": ts}
 
 
@@ -663,6 +689,13 @@ def simulate_retrain(conn, project_id: int) -> dict:
         improvement,
         f1=f1,
         auc=auc,
+    )
+
+    # Pub-Sub (A.7): cierre del ciclo de Active Learning. Aditivo: no cambia el
+    # retorno (solo se publica en el path 'ok', tras registrar el ciclo).
+    events.bus.publish(
+        events.CICLO_FINALIZO,
+        {"conn": conn, "project_id": project_id, "improvement_pct": improvement},
     )
 
     return {
