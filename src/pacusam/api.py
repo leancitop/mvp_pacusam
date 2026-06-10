@@ -27,7 +27,7 @@ from fastapi.responses import JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import auth, db, seed, services, templating
+from . import auth, db, events, seed, services, templating
 
 _STATIC_DIR = Path(__file__).parent / "static"
 
@@ -64,10 +64,49 @@ def create_app(db_path: str | None = None) -> FastAPI:
 
     `db_path=None` usa la env var PACUSAM_DB (db.connect resuelve el default).
     Pasar ':memory:' explicitamente en tests.
+
+    Event Processing (white paper A.7) materializado por el bus de events.py:
+    - SEP (Single Event Processing): cada POST /validate|reject es una accion
+      uno-a-uno que emite `ImagenValidada`.
+    - OEP (Online Event Processing): el score de confianza se ve al instante y la
+      cola se reordena por incertidumbre en cada accion (_render_next_card ->
+      queue_next).
+    - CEP (Complex Event Processing): `UmbralAlcanzado` es un evento DERIVADO de N
+      `ImagenValidada` acumuladas (umbral), que aca suscribimos para disparar
+      automaticamente el re-entrenamiento (feedback loop de Pipes & Filters via
+      Pub-Sub).
     """
     # (1) app + conexion unica compartida (D18) + StaticFiles + SessionMiddleware (D25).
     app = FastAPI(title="PACUSAM MVP", version="1.0.0")
     app.state.conn = db.connect(db_path)
+
+    # (1.b) Wiring de eventos (Pub-Sub, A.7). clear() al inicio para no acumular
+    # suscriptores duplicados cuando se crean varias apps (tests). El suscriptor
+    # del feedback loop (CEP) muta estado: por eso se registra SOLO aca, nunca a
+    # nivel de import de services (asi los tests unitarios de dominio no auto-
+    # reentrenan). La semilla usa retrain_threshold=20, fuera del alcance de los
+    # tests existentes, asi que el auto-retrain no se dispara en ellos.
+    events.bus.clear()
+
+    def _on_umbral(payload):
+        """Suscriptor CEP: al alcanzar el umbral de validadas, dispara un ciclo de
+        re-entrenamiento automatico (feedback loop).
+
+        Corre simulate_retrain sobre las pendientes. Si al cruzar el umbral ya no
+        quedan pendientes que reentrenar (status 'calibrado'), igual registra un
+        ciclo minimo para dejar trazabilidad de que el umbral disparo el ciclo
+        (sin alterar el comportamiento de simulate_retrain, que sigue intacto)."""
+        conn = payload["conn"]
+        project_id = payload["project_id"]
+        result = services.simulate_retrain(conn, project_id)
+        if result["status"] != "ok":
+            # El re-entrenamiento no produjo cambios (sin pendientes / ya
+            # calibrado), pero el umbral SI se cruzo: dejamos constancia del
+            # ciclo disparado por el feedback loop.
+            services.record_cycle(conn, project_id, 0, 0.0, 0.0, 0.0)
+
+    events.bus.subscribe(events.UMBRAL_ALCANZADO, _on_umbral)
+
     app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
     # D25: cookie de sesion. Por defecto http-friendly: la demo local corre sobre
     # http://localhost y la cookie de sesion debe poder round-tripear sin HTTPS.
