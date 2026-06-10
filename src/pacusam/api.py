@@ -56,6 +56,7 @@ class _RedirectException(Exception):
     de create_app la traduce a RedirectResponse(location, 303) (Decision #4/D01)."""
 
     def __init__(self, location: str = "/login"):
+        """Guarda el destino del redirect (default /login) que aplicara el handler."""
         self.location = location
         super().__init__(location)
 
@@ -128,9 +129,11 @@ def create_app(db_path: str | None = None) -> FastAPI:
     # (2) exception handler de _RedirectException + _guard / _STATUS.
     @app.exception_handler(_RedirectException)
     async def _redirect_handler(request: Request, exc: _RedirectException):
+        """Traduce _RedirectException a un RedirectResponse 303 al destino indicado."""
         return RedirectResponse(exc.location, status_code=303)
 
     def get_conn():
+        """Dependency: devuelve la unica conexion compartida de la app (D18)."""
         return app.state.conn
 
     def _guard(fn, *args):
@@ -234,6 +237,7 @@ def create_app(db_path: str | None = None) -> FastAPI:
 
     @app.get("/register", include_in_schema=False)
     def register_page(request: Request):
+        """Renderiza el formulario de registro de un nuevo curador."""
         return templating.render(request, "register.html")
 
     @app.post("/register", include_in_schema=False)
@@ -243,6 +247,7 @@ def create_app(db_path: str | None = None) -> FastAPI:
         email: str = Form(""),
         password: str = Form(""),
     ):
+        """Crea el usuario; en exito inicia sesion y redirige, sino re-renderiza con error."""
         try:
             user = auth.create_user(conn, email, password)
         except services.DomainError as e:
@@ -267,6 +272,7 @@ def create_app(db_path: str | None = None) -> FastAPI:
         email: str = Form(""),
         password: str = Form(""),
     ):
+        """Autentica credenciales; en exito inicia sesion y redirige, sino re-renderiza con error 401."""
         user = auth.authenticate(conn, email, password)
         if user is None:
             return templating.render(
@@ -281,12 +287,14 @@ def create_app(db_path: str | None = None) -> FastAPI:
 
     @app.post("/logout", include_in_schema=False)
     def logout_action(request: Request):
+        """Limpia la sesion y redirige a /login."""
         request.session.clear()
         return RedirectResponse("/login", status_code=303)
 
     # (4) rutas proyectos (D): home, crear, detalle.
     @app.get("/", include_in_schema=False)
     def home(request: Request, user=Depends(require_user), conn=Depends(get_conn)):
+        """Home: lista los proyectos del usuario con su progreso y un flash opcional."""
         projects = services.list_projects(conn, user["id"])
         for p in projects:
             p["progress"] = services.progress(conn, p["id"])
@@ -309,6 +317,7 @@ def create_app(db_path: str | None = None) -> FastAPI:
         domain: str = Form(""),
         labels: str = Form(""),
     ):
+        """Crea un proyecto del usuario, siembra su dataset si existe y redirige al detalle."""
         label_list = [l.strip() for l in labels.split(",") if l.strip()]
         try:
             project = services.create_project(
@@ -329,6 +338,7 @@ def create_app(db_path: str | None = None) -> FastAPI:
         project_id: int, request: Request,
         user=Depends(require_user), conn=Depends(get_conn),
     ):
+        """Detalle de un proyecto propio (404 si ajeno) con su progreso."""
         project = _owned_project(conn, project_id, user)
         prog = services.progress(conn, project_id)
         return templating.render(
@@ -341,6 +351,7 @@ def create_app(db_path: str | None = None) -> FastAPI:
         project_id: int, request: Request,
         user=Depends(require_user), conn=Depends(get_conn),
     ):
+        """Pagina de curado: proxima imagen, filmstrip, conteos por etiqueta y progreso."""
         project = _owned_project(conn, project_id, user)
         nxt = services.queue_next(conn, project_id)
         return templating.render(
@@ -363,6 +374,7 @@ def create_app(db_path: str | None = None) -> FastAPI:
         label: str | None = None, strategy: str | None = None,
         user=Depends(require_user), conn=Depends(get_conn),
     ):
+        """Fragmento HTMX de la cola: proxima imagen + filmstrip (filtro/estrategia opcionales)."""
         # US-17: query param `label` opcional filtra el filmstrip por suggested_label.
         # A1: query param `strategy` opcional reordena SOLO la proxima imagen
         # (queue_next); se valida en {uncertainty, random, sequential} (sino uncertainty).
@@ -376,6 +388,7 @@ def create_app(db_path: str | None = None) -> FastAPI:
         image_id: int, request: Request, label: str = Form(""),
         user=Depends(require_user), conn=Depends(get_conn),
     ):
+        """Valida una imagen propia con la etiqueta dada, la registra y auto-avanza la cola."""
         img = _guard(services.get_image, conn, image_id)
         _owned_project(conn, img["project_id"], user)
         _guard(services.validate_image, conn, image_id, label)
@@ -387,6 +400,7 @@ def create_app(db_path: str | None = None) -> FastAPI:
         image_id: int, request: Request, reason: str = Form(""),
         user=Depends(require_user), conn=Depends(get_conn),
     ):
+        """Rechaza una imagen propia con motivo, la registra y auto-avanza la cola."""
         img = _guard(services.get_image, conn, image_id)
         _owned_project(conn, img["project_id"], user)
         _guard(services.reject_image, conn, image_id, reason)
@@ -398,6 +412,7 @@ def create_app(db_path: str | None = None) -> FastAPI:
         image_id: int, request: Request,
         user=Depends(require_user), conn=Depends(get_conn),
     ):
+        """Revierte el rechazo de una imagen propia (vuelve a pendiente) y auto-avanza la cola."""
         img = _guard(services.get_image, conn, image_id)
         _owned_project(conn, img["project_id"], user)
         _guard(services.unreject_image, conn, image_id)
@@ -408,6 +423,7 @@ def create_app(db_path: str | None = None) -> FastAPI:
     def get_progress(
         project_id: int, user=Depends(require_user), conn=Depends(get_conn),
     ):
+        """Devuelve el progreso (JSON) de un proyecto propio."""
         _owned_project(conn, project_id, user)
         return services.progress(conn, project_id)
 
@@ -417,6 +433,7 @@ def create_app(db_path: str | None = None) -> FastAPI:
         project_id: int, request: Request,
         user=Depends(require_user), conn=Depends(get_conn),
     ):
+        """Simula un re-entrenamiento del proyecto y devuelve un toast con el resultado (D13)."""
         _owned_project(conn, project_id, user)
         result = _guard(services.simulate_retrain, conn, project_id)
         # D13: copy unificado a "Confianza media de pendientes +X%" + cap del re-click.
@@ -484,6 +501,7 @@ def create_app(db_path: str | None = None) -> FastAPI:
         project_id: int, request: Request,
         user=Depends(require_user), conn=Depends(get_conn),
     ):
+        """Analytics del proyecto: concordancia, distribucion, ciclos AL, calidad y salud."""
         project = _owned_project(conn, project_id, user)
         return templating.render(
             request,
@@ -519,6 +537,7 @@ def create_app(db_path: str | None = None) -> FastAPI:
         project_id: int,
         user=Depends(require_user), conn=Depends(get_conn),
     ):
+        """Exporta el dataset curado del proyecto como CSV adjunto (US-23)."""
         project = _owned_project(conn, project_id, user)
         rows = services.export_rows(conn, project_id)
         buf = io.StringIO()
@@ -538,6 +557,7 @@ def create_app(db_path: str | None = None) -> FastAPI:
         project_id: int,
         user=Depends(require_user), conn=Depends(get_conn),
     ):
+        """Exporta el dataset curado del proyecto como JSON (rows + summary) (US-23)."""
         _owned_project(conn, project_id, user)
         return JSONResponse(
             {
@@ -555,6 +575,7 @@ def create_app(db_path: str | None = None) -> FastAPI:
         action: str | None = None,
         user=Depends(require_admin), conn=Depends(get_conn),
     ):
+        """Panel admin (read-only): lista usuarios y el log de actividad filtrable (D3)."""
         users = [
             {"id": r["id"], "email": r["email"], "role": r["role"]}
             for r in conn.execute(
