@@ -27,7 +27,7 @@ from fastapi.responses import JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import auth, db, seed, services, templating
+from . import __version__, auth, db, events, seed, services, templating
 
 _STATIC_DIR = Path(__file__).parent / "static"
 
@@ -41,6 +41,7 @@ _STATUS = {
     "name_required": 422,
     "name_too_long": 422,
     "email_exists": 409,
+    "password_too_short": 422,
 }
 
 # Mensajes legibles para el flash de creacion de proyecto (D20 los lee del detalle).
@@ -55,6 +56,7 @@ class _RedirectException(Exception):
     de create_app la traduce a RedirectResponse(location, 303) (Decision #4/D01)."""
 
     def __init__(self, location: str = "/login"):
+        """Guarda el destino del redirect (default /login) que aplicara el handler."""
         self.location = location
         super().__init__(location)
 
@@ -64,10 +66,49 @@ def create_app(db_path: str | None = None) -> FastAPI:
 
     `db_path=None` usa la env var PACUSAM_DB (db.connect resuelve el default).
     Pasar ':memory:' explicitamente en tests.
+
+    Event Processing (white paper A.7) materializado por el bus de events.py:
+    - SEP (Single Event Processing): cada POST /validate|reject es una accion
+      uno-a-uno que emite `ImagenValidada`.
+    - OEP (Online Event Processing): el score de confianza se ve al instante y la
+      cola se reordena por incertidumbre en cada accion (_render_next_card ->
+      queue_next).
+    - CEP (Complex Event Processing): `UmbralAlcanzado` es un evento DERIVADO de N
+      `ImagenValidada` acumuladas (umbral), que aca suscribimos para disparar
+      automaticamente el re-entrenamiento (feedback loop de Pipes & Filters via
+      Pub-Sub).
     """
     # (1) app + conexion unica compartida (D18) + StaticFiles + SessionMiddleware (D25).
     app = FastAPI(title="PACUSAM MVP", version="1.0.0")
     app.state.conn = db.connect(db_path)
+
+    # (1.b) Wiring de eventos (Pub-Sub, A.7). clear() al inicio para no acumular
+    # suscriptores duplicados cuando se crean varias apps (tests). El suscriptor
+    # del feedback loop (CEP) muta estado: por eso se registra SOLO aca, nunca a
+    # nivel de import de services (asi los tests unitarios de dominio no auto-
+    # reentrenan). La semilla usa retrain_threshold=20, fuera del alcance de los
+    # tests existentes, asi que el auto-retrain no se dispara en ellos.
+    events.bus.clear()
+
+    def _on_umbral(payload):
+        """Suscriptor CEP: al alcanzar el umbral de validadas, dispara un ciclo de
+        re-entrenamiento automatico (feedback loop).
+
+        Corre simulate_retrain sobre las pendientes. Si al cruzar el umbral ya no
+        quedan pendientes que reentrenar (status 'calibrado'), igual registra un
+        ciclo minimo para dejar trazabilidad de que el umbral disparo el ciclo
+        (sin alterar el comportamiento de simulate_retrain, que sigue intacto)."""
+        conn = payload["conn"]
+        project_id = payload["project_id"]
+        result = services.simulate_retrain(conn, project_id)
+        if result["status"] != "ok":
+            # El re-entrenamiento no produjo cambios (sin pendientes / ya
+            # calibrado), pero el umbral SI se cruzo: dejamos constancia del
+            # ciclo disparado por el feedback loop.
+            services.record_cycle(conn, project_id, 0, 0.0, 0.0, 0.0)
+
+    events.bus.subscribe(events.UMBRAL_ALCANZADO, _on_umbral)
+
     app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
     # D25: cookie de sesion. Por defecto http-friendly: la demo local corre sobre
     # http://localhost y la cookie de sesion debe poder round-tripear sin HTTPS.
@@ -88,9 +129,11 @@ def create_app(db_path: str | None = None) -> FastAPI:
     # (2) exception handler de _RedirectException + _guard / _STATUS.
     @app.exception_handler(_RedirectException)
     async def _redirect_handler(request: Request, exc: _RedirectException):
+        """Traduce _RedirectException a un RedirectResponse 303 al destino indicado."""
         return RedirectResponse(exc.location, status_code=303)
 
     def get_conn():
+        """Dependency: devuelve la unica conexion compartida de la app (D18)."""
         return app.state.conn
 
     def _guard(fn, *args):
@@ -182,12 +225,19 @@ def create_app(db_path: str | None = None) -> FastAPI:
             pass
 
     # (3) rutas auth (NO pasan por _guard; renderizan el form con error y status 400/401).
+    @app.get("/health")
+    def health():
+        """Healthcheck publico (sin sesion): JSON {status, version} para liveness/probes."""
+        return JSONResponse({"status": "ok", "version": __version__})
+
     @app.get("/login", include_in_schema=False)
     def login_page(request: Request):
+        """Renderiza el formulario de login."""
         return templating.render(request, "login.html")
 
     @app.get("/register", include_in_schema=False)
     def register_page(request: Request):
+        """Renderiza el formulario de registro de un nuevo curador."""
         return templating.render(request, "register.html")
 
     @app.post("/register", include_in_schema=False)
@@ -197,15 +247,20 @@ def create_app(db_path: str | None = None) -> FastAPI:
         email: str = Form(""),
         password: str = Form(""),
     ):
+        """Crea el usuario; en exito inicia sesion y redirige, sino re-renderiza con error."""
         try:
             user = auth.create_user(conn, email, password)
         except services.DomainError as e:
+            messages = {
+                "email_exists": "El email ya esta registrado.",
+                "password_too_short": "La contrasena debe tener al menos 6 caracteres.",
+            }
             return templating.render(
                 request,
                 "register.html",
                 status_code=400,
                 email=email,
-                error="El email ya esta registrado." if e.code == "email_exists" else e.code,
+                error=messages.get(e.code, e.code),
             )
         request.session["user_id"] = user["id"]
         return RedirectResponse("/", status_code=303)
@@ -217,6 +272,7 @@ def create_app(db_path: str | None = None) -> FastAPI:
         email: str = Form(""),
         password: str = Form(""),
     ):
+        """Autentica credenciales; en exito inicia sesion y redirige, sino re-renderiza con error 401."""
         user = auth.authenticate(conn, email, password)
         if user is None:
             return templating.render(
@@ -231,12 +287,14 @@ def create_app(db_path: str | None = None) -> FastAPI:
 
     @app.post("/logout", include_in_schema=False)
     def logout_action(request: Request):
+        """Limpia la sesion y redirige a /login."""
         request.session.clear()
         return RedirectResponse("/login", status_code=303)
 
     # (4) rutas proyectos (D): home, crear, detalle.
     @app.get("/", include_in_schema=False)
     def home(request: Request, user=Depends(require_user), conn=Depends(get_conn)):
+        """Home: lista los proyectos del usuario con su progreso y un flash opcional."""
         projects = services.list_projects(conn, user["id"])
         for p in projects:
             p["progress"] = services.progress(conn, p["id"])
@@ -259,6 +317,7 @@ def create_app(db_path: str | None = None) -> FastAPI:
         domain: str = Form(""),
         labels: str = Form(""),
     ):
+        """Crea un proyecto del usuario, siembra su dataset si existe y redirige al detalle."""
         label_list = [l.strip() for l in labels.split(",") if l.strip()]
         try:
             project = services.create_project(
@@ -279,6 +338,7 @@ def create_app(db_path: str | None = None) -> FastAPI:
         project_id: int, request: Request,
         user=Depends(require_user), conn=Depends(get_conn),
     ):
+        """Detalle de un proyecto propio (404 si ajeno) con su progreso."""
         project = _owned_project(conn, project_id, user)
         prog = services.progress(conn, project_id)
         return templating.render(
@@ -291,6 +351,7 @@ def create_app(db_path: str | None = None) -> FastAPI:
         project_id: int, request: Request,
         user=Depends(require_user), conn=Depends(get_conn),
     ):
+        """Pagina de curado: proxima imagen, filmstrip, conteos por etiqueta y progreso."""
         project = _owned_project(conn, project_id, user)
         nxt = services.queue_next(conn, project_id)
         return templating.render(
@@ -313,6 +374,7 @@ def create_app(db_path: str | None = None) -> FastAPI:
         label: str | None = None, strategy: str | None = None,
         user=Depends(require_user), conn=Depends(get_conn),
     ):
+        """Fragmento HTMX de la cola: proxima imagen + filmstrip (filtro/estrategia opcionales)."""
         # US-17: query param `label` opcional filtra el filmstrip por suggested_label.
         # A1: query param `strategy` opcional reordena SOLO la proxima imagen
         # (queue_next); se valida en {uncertainty, random, sequential} (sino uncertainty).
@@ -326,6 +388,7 @@ def create_app(db_path: str | None = None) -> FastAPI:
         image_id: int, request: Request, label: str = Form(""),
         user=Depends(require_user), conn=Depends(get_conn),
     ):
+        """Valida una imagen propia con la etiqueta dada, la registra y auto-avanza la cola."""
         img = _guard(services.get_image, conn, image_id)
         _owned_project(conn, img["project_id"], user)
         _guard(services.validate_image, conn, image_id, label)
@@ -337,6 +400,7 @@ def create_app(db_path: str | None = None) -> FastAPI:
         image_id: int, request: Request, reason: str = Form(""),
         user=Depends(require_user), conn=Depends(get_conn),
     ):
+        """Rechaza una imagen propia con motivo, la registra y auto-avanza la cola."""
         img = _guard(services.get_image, conn, image_id)
         _owned_project(conn, img["project_id"], user)
         _guard(services.reject_image, conn, image_id, reason)
@@ -348,6 +412,7 @@ def create_app(db_path: str | None = None) -> FastAPI:
         image_id: int, request: Request,
         user=Depends(require_user), conn=Depends(get_conn),
     ):
+        """Revierte el rechazo de una imagen propia (vuelve a pendiente) y auto-avanza la cola."""
         img = _guard(services.get_image, conn, image_id)
         _owned_project(conn, img["project_id"], user)
         _guard(services.unreject_image, conn, image_id)
@@ -358,6 +423,7 @@ def create_app(db_path: str | None = None) -> FastAPI:
     def get_progress(
         project_id: int, user=Depends(require_user), conn=Depends(get_conn),
     ):
+        """Devuelve el progreso (JSON) de un proyecto propio."""
         _owned_project(conn, project_id, user)
         return services.progress(conn, project_id)
 
@@ -367,6 +433,7 @@ def create_app(db_path: str | None = None) -> FastAPI:
         project_id: int, request: Request,
         user=Depends(require_user), conn=Depends(get_conn),
     ):
+        """Simula un re-entrenamiento del proyecto y devuelve un toast con el resultado (D13)."""
         _owned_project(conn, project_id, user)
         result = _guard(services.simulate_retrain, conn, project_id)
         # D13: copy unificado a "Confianza media de pendientes +X%" + cap del re-click.
@@ -434,6 +501,7 @@ def create_app(db_path: str | None = None) -> FastAPI:
         project_id: int, request: Request,
         user=Depends(require_user), conn=Depends(get_conn),
     ):
+        """Analytics del proyecto: concordancia, distribucion, ciclos AL, calidad y salud."""
         project = _owned_project(conn, project_id, user)
         return templating.render(
             request,
@@ -469,6 +537,7 @@ def create_app(db_path: str | None = None) -> FastAPI:
         project_id: int,
         user=Depends(require_user), conn=Depends(get_conn),
     ):
+        """Exporta el dataset curado del proyecto como CSV adjunto (US-23)."""
         project = _owned_project(conn, project_id, user)
         rows = services.export_rows(conn, project_id)
         buf = io.StringIO()
@@ -488,6 +557,7 @@ def create_app(db_path: str | None = None) -> FastAPI:
         project_id: int,
         user=Depends(require_user), conn=Depends(get_conn),
     ):
+        """Exporta el dataset curado del proyecto como JSON (rows + summary) (US-23)."""
         _owned_project(conn, project_id, user)
         return JSONResponse(
             {
@@ -505,6 +575,7 @@ def create_app(db_path: str | None = None) -> FastAPI:
         action: str | None = None,
         user=Depends(require_admin), conn=Depends(get_conn),
     ):
+        """Panel admin (read-only): lista usuarios y el log de actividad filtrable (D3)."""
         users = [
             {"id": r["id"], "email": r["email"], "role": r["role"]}
             for r in conn.execute(

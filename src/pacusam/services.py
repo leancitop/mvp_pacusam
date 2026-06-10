@@ -11,7 +11,7 @@ import json
 import random
 from datetime import datetime, timezone
 
-from . import classifier
+from . import events, pipeline
 
 
 class DomainError(Exception):
@@ -95,9 +95,10 @@ def get_image(conn, image_id: int) -> dict:
 
 
 def seed_images(conn, project_id: int, filenames: list[str]) -> int:
-    """Registra imagenes mockeadas del proyecto en DB, pasando cada una por el STUB
-    del clasificador (sugerencia + confianza). Idempotente por (project_id, filename):
-    re-sembrar no duplica. Devuelve cuantas se insertaron.
+    """Registra imagenes mockeadas del proyecto en DB, pasando cada una por el
+    pipeline de ingesta (Pipes & Filters, A.7): validar formato -> clasificar
+    (sugerencia + confianza via el STUB del clasificador). Idempotente por
+    (project_id, filename): re-sembrar no duplica. Devuelve cuantas se insertaron.
 
     `path` apunta al archivo servido estaticamente en static/datasets/<project_id>/.
     """
@@ -110,7 +111,13 @@ def seed_images(conn, project_id: int, filenames: list[str]) -> int:
         ).fetchone()
         if exists:
             continue
-        label, conf = classifier.suggest(fn, labels)
+        # Pipes & Filters (A.7): la ingesta corre los filtros encadenados. El
+        # filtro_clasificar usa el MISMO classifier.suggest -> confianza identica.
+        ctx = pipeline.run_pipeline(
+            pipeline.INGESTA, {"filename": fn, "labels": labels}
+        )
+        label = ctx["suggested_label"]
+        conf = ctx["confidence"]
         path = f"/static/datasets/{project_id}/{fn}"
         conn.execute(
             "INSERT INTO images (project_id, filename, path, suggested_label, "
@@ -119,13 +126,16 @@ def seed_images(conn, project_id: int, filenames: list[str]) -> int:
         )
         inserted += 1
     conn.commit()
+    # Pub-Sub (A.7): notifica la ingesta de un lote. Aditivo: no cambia el retorno.
+    if inserted > 0:
+        events.bus.publish(
+            events.IMAGENES_SUBIDAS,
+            {"conn": conn, "project_id": project_id, "count": inserted},
+        )
     return inserted
 
 
 # ============================================================ cola (Active Learning)
-
-# A1: estrategias de sampling soportadas. uncertainty es el default historico.
-_STRATEGIES = ("uncertainty", "sequential", "random")
 
 
 def _order_rows(rows: list, strategy: str, seed: int | None) -> list:
@@ -188,18 +198,13 @@ def queue_next(
     }
 
 
-def queue_list(
-    conn,
-    project_id: int,
-    label: str | None = None,
-    strategy: str = "uncertainty",
-    seed: int | None = None,
-) -> list[dict]:
-    """Todas las imagenes del proyecto, ordenadas segun la estrategia (filmstrip).
+def queue_list(conn, project_id: int, label: str | None = None) -> list[dict]:
+    """Todas las imagenes del proyecto, ordenadas por uncertainty (filmstrip).
     Incluye status para que el front pinte validadas/rechazadas/pendientes.
 
     US-17: `label` opcional filtra por suggested_label (None = todas las clases).
-    A1: `strategy`/`seed` opcionales al final; el default sigue siendo uncertainty.
+    A1: el filmstrip SIEMPRE usa uncertainty por diseno (la estrategia de sampling
+    solo afecta a queue_next / la proxima imagen).
     """
     sql = (
         "SELECT id, filename, path, suggested_label, confidence, status, final_label "
@@ -210,7 +215,7 @@ def queue_list(
         sql += "AND suggested_label = ? "
         params.append(label)
     rows = conn.execute(sql, tuple(params)).fetchall()
-    ordered = _order_rows(rows, strategy, seed)
+    ordered = _order_rows(rows, "uncertainty", None)
     out = []
     for r in ordered:
         conf = r["confidence"] if r["confidence"] is not None else 0.5
@@ -242,43 +247,7 @@ def label_counts(conn, project_id: int) -> list[tuple[str, int]]:
     return [(r["label"], r["count"]) for r in rows]
 
 
-# ============================================================ gallery / bulk (C2)
-
-def gallery(conn, project_id: int, q: str | None = None, label: str | None = None) -> list[dict]:
-    """C2. Imagenes del proyecto para la vista grilla, con filtros opcionales.
-
-    `q`: substring (LIKE) sobre filename. `label`: filtra por suggested_label.
-    Devuelve [{id, filename, path, suggested_label, confidence, status, final_label}].
-    """
-    sql = (
-        "SELECT id, filename, path, suggested_label, confidence, status, final_label "
-        "FROM images WHERE project_id = ? "
-    )
-    params: list = [project_id]
-    if q:
-        sql += "AND filename LIKE ? "
-        params.append(f"%{q}%")
-    if label is not None:
-        sql += "AND suggested_label = ? "
-        params.append(label)
-    sql += "ORDER BY (1.0 - COALESCE(confidence, 0.5)) DESC, id ASC"
-    rows = conn.execute(sql, tuple(params)).fetchall()
-    out = []
-    for r in rows:
-        conf = r["confidence"] if r["confidence"] is not None else 0.5
-        out.append(
-            {
-                "id": r["id"],
-                "filename": r["filename"],
-                "path": r["path"],
-                "suggested_label": r["suggested_label"],
-                "confidence": conf,
-                "status": r["status"],
-                "final_label": r["final_label"],
-            }
-        )
-    return out
-
+# ============================================================ bulk (C2)
 
 def bulk_validate(conn, image_ids) -> int:
     """C2. Confirma en lote la sugerencia del modelo para cada imagen (best-effort).
@@ -314,6 +283,26 @@ def validate_image(conn, image_id: int, label: str) -> dict:
         (label, ts, image_id),
     )
     conn.commit()
+    project_id = row["project_id"]
+    # SEP (A.7): cada validacion emite un evento de dominio uno-a-uno.
+    events.bus.publish(
+        events.IMAGEN_VALIDADA,
+        {"conn": conn, "image_id": image_id, "project_id": project_id},
+    )
+    # CEP (A.7): UmbralAlcanzado es un evento DERIVADO de N ImagenValidada; se
+    # publica SOLO en el cruce exacto (validated == threshold) para que dispare
+    # una unica vez. Aditivo: no cambia el retorno de la funcion.
+    ts_status = threshold_status(conn, project_id)
+    if ts_status["validated"] == ts_status["threshold"]:
+        events.bus.publish(
+            events.UMBRAL_ALCANZADO,
+            {
+                "conn": conn,
+                "project_id": project_id,
+                "validated": ts_status["validated"],
+                "threshold": ts_status["threshold"],
+            },
+        )
     return {"id": image_id, "status": "validated", "final_label": label, "validated_at": ts}
 
 
@@ -663,6 +652,13 @@ def simulate_retrain(conn, project_id: int) -> dict:
         improvement,
         f1=f1,
         auc=auc,
+    )
+
+    # Pub-Sub (A.7): cierre del ciclo de Active Learning. Aditivo: no cambia el
+    # retorno (solo se publica en el path 'ok', tras registrar el ciclo).
+    events.bus.publish(
+        events.CICLO_FINALIZO,
+        {"conn": conn, "project_id": project_id, "improvement_pct": improvement},
     )
 
     return {
