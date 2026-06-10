@@ -1,7 +1,7 @@
-"""Unit tests de bulk_validate + gallery (C2-backend, CAPA 1).
+"""Unit tests de bulk_validate (C2-backend, CAPA 1).
 
 bulk_validate es best-effort: try/except DomainError por id, cuenta solo exitos,
-no aborta el lote. gallery filtra por nombre parcial (LIKE) y/o label.
+no aborta el lote.
 """
 from __future__ import annotations
 
@@ -56,27 +56,3 @@ def test_bulk_validate_best_effort_ignora_sin_suggested(conn):
     n = services.bulk_validate(conn, [ok1, bad, ok2])
     assert n == 2  # solo los dos validos
     assert services.progress(conn, pid)["validated"] == 2
-
-
-def test_gallery_busca_por_nombre_parcial(conn):
-    pid = _project(conn, labels=("X",))
-    for fn in ["rx_0001.jpg", "rx_0002.jpg", "bccd_5.jpg"]:
-        _img(conn, pid, fn, label="X", conf=0.7)
-    r = services.gallery(conn, pid, q="rx_000")
-    assert len(r) == 2
-    assert services.gallery(conn, pid, q="zzz") == []
-
-
-def test_gallery_filtra_por_label(conn):
-    pid = _project(conn, labels=("X", "Y"))
-    _img(conn, pid, "a.jpg", label="X")
-    _img(conn, pid, "b.jpg", label="Y")
-    r = services.gallery(conn, pid, label="Y")
-    assert len(r) == 1 and r[0]["filename"] == "b.jpg"
-
-
-def test_gallery_sin_filtros_devuelve_todas(conn):
-    pid = _project(conn, labels=("X",))
-    for fn in ["a.jpg", "b.jpg"]:
-        _img(conn, pid, fn, label="X")
-    assert len(services.gallery(conn, pid)) == 2

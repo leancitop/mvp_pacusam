@@ -255,43 +255,7 @@ def label_counts(conn, project_id: int) -> list[tuple[str, int]]:
     return [(r["label"], r["count"]) for r in rows]
 
 
-# ============================================================ gallery / bulk (C2)
-
-def gallery(conn, project_id: int, q: str | None = None, label: str | None = None) -> list[dict]:
-    """C2. Imagenes del proyecto para la vista grilla, con filtros opcionales.
-
-    `q`: substring (LIKE) sobre filename. `label`: filtra por suggested_label.
-    Devuelve [{id, filename, path, suggested_label, confidence, status, final_label}].
-    """
-    sql = (
-        "SELECT id, filename, path, suggested_label, confidence, status, final_label "
-        "FROM images WHERE project_id = ? "
-    )
-    params: list = [project_id]
-    if q:
-        sql += "AND filename LIKE ? "
-        params.append(f"%{q}%")
-    if label is not None:
-        sql += "AND suggested_label = ? "
-        params.append(label)
-    sql += "ORDER BY (1.0 - COALESCE(confidence, 0.5)) DESC, id ASC"
-    rows = conn.execute(sql, tuple(params)).fetchall()
-    out = []
-    for r in rows:
-        conf = r["confidence"] if r["confidence"] is not None else 0.5
-        out.append(
-            {
-                "id": r["id"],
-                "filename": r["filename"],
-                "path": r["path"],
-                "suggested_label": r["suggested_label"],
-                "confidence": conf,
-                "status": r["status"],
-                "final_label": r["final_label"],
-            }
-        )
-    return out
-
+# ============================================================ bulk (C2)
 
 def bulk_validate(conn, image_ids) -> int:
     """C2. Confirma en lote la sugerencia del modelo para cada imagen (best-effort).
