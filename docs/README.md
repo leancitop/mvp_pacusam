@@ -2,11 +2,6 @@
 
 Índice de la documentación del proyecto (MVP de curado de imágenes médicas con Active Learning).
 
-## Para la presentación / defensa
-- [`presentacion.md`](presentacion.md) — guion de presentación + demo en vivo (paso a paso, wow moments, timing).
-- [`defensa.md`](defensa.md) — preguntas anticipadas del docente con respuestas + diagramas de arquitectura (Mermaid y ASCII).
-- [`informe-tpfi.md`](informe-tpfi.md) — informe del TPFI (se puede generar en PDF con `make-pdf`).
-
 ## Para usar y entender el MVP
 - [`manual.md`](manual.md) — manual de uso de cada pantalla + mapa feature → user story → archivo + glosario.
 
